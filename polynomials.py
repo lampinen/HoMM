@@ -75,12 +75,26 @@ class polynomial_family(object):
 
         return polynomial(self, coeffs)
 
+
+    def permute_vars(self, poly, permutation):
+        permuted_vars = [self.variables[i] for i in permutation]
+        new_var = dict(zip(self.variables, permuted_vars))
+        new_coeffs = {}
+        for term, coef in poly.coefficients.items():
+            if term == "1": 
+                new_term = "1"
+            else:
+                new_term = tuple([new_var[var] for var in list(term)])
+            new_coeffs[new_term] = coef
+
+        return polynomial(self, new_coeffs)
+
     
     def _term_to_symbols(self, term):
         if term == "1":
             return ""
         term = list(term)
-        res = ""
+        res = " "
         curr_var = term.pop(0)
         curr_count = 1 
         while len(term) > 0:
@@ -89,15 +103,15 @@ class polynomial_family(object):
                 curr_count += 1
             else:
                 if curr_count == 1:
-                    res += curr_var
+                    res += curr_var + " "
                 else:
-                    res += "%s^%i" % (curr_var, curr_count)
+                    res += "%s ^ %i " % (curr_var, curr_count)
                 curr_var = next_var 
                 curr_count = 1
         if curr_count == 1:
-            res += curr_var
+            res += curr_var + " "
         else:
-            res += "%s^%i" % (curr_var, curr_count)
+            res += "%s ^ %i " % (curr_var, curr_count)
         return res
                 
 
@@ -106,11 +120,11 @@ class polynomial_family(object):
         temp_results = [[] for _ in range(self.max_degree + 1)]
         for term, coeff in poly.coefficients.items():
             degree = 0 if term == "1" else len(term)
-            temp_results[degree] += ["%.2f%s" % (coeff, 
+            temp_results[degree] += [" %.2f%s " % (coeff, 
                                                  self._term_to_symbols(term))] 
         temp_results = [l for l in temp_results if l != []]
 
-        return " + ".join([" + ".join(deg_results) for deg_results in temp_results])
+        return "+".join(["+".join(deg_results) for deg_results in temp_results])[1:]
 
 
 class polynomial(object):
@@ -130,6 +144,9 @@ class polynomial(object):
 
     def __mul__(self, poly2):
         return self.family.mult(self, poly2)
+
+    def permute_vars(self, permutation):
+        return self.family.permute_vars(self, permutation)
 
     def to_symbols(self):
         return self.family.poly_to_symbols(self)
@@ -184,3 +201,10 @@ if __name__ == "__main__":
     print(x2c1.to_symbols())
     print(yplus2.to_symbols())
     print(multiplied.to_symbols())
+
+
+    print("permuting")
+    permuted1 = yplus2.permute_vars([2, 0, 1])
+    print(permuted1.to_symbols())
+    permuted_multiplied = multiplied.permute_vars([0, 2, 1])
+    print(permuted_multiplied.to_symbols())
