@@ -98,7 +98,6 @@ class polynomial_family(object):
             res += curr_var
         else:
             res += "%s^%i" % (curr_var, curr_count)
-        print(res)
         return res
                 
 
@@ -107,9 +106,9 @@ class polynomial_family(object):
         temp_results = [[] for _ in range(self.max_degree + 1)]
         for term, coeff in poly.coefficients.items():
             degree = 0 if term == "1" else len(term)
-            print(self._term_to_symbols(term))
             temp_results[degree] += ["%.2f%s" % (coeff, 
                                                  self._term_to_symbols(term))] 
+        temp_results = [l for l in temp_results if l != []]
 
         return " + ".join([" + ".join(deg_results) for deg_results in temp_results])
 
@@ -183,4 +182,5 @@ if __name__ == "__main__":
     print(multiplied.my_max_degree)
 
     print(x2c1.to_symbols())
+    print(yplus2.to_symbols())
     print(multiplied.to_symbols())
