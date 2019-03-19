@@ -75,13 +75,50 @@ class polynomial_family(object):
 
         return polynomial(self, coeffs)
 
+    
+    def _term_to_symbols(self, term):
+        if term == "1":
+            return ""
+        term = list(term)
+        res = ""
+        curr_var = term.pop(0)
+        curr_count = 1 
+        while len(term) > 0:
+            next_var = term.pop(0)
+            if next_var == curr_var:
+                curr_count += 1
+            else:
+                if curr_count == 1:
+                    res += curr_var
+                else:
+                    res += "%s^%i" % (curr_var, curr_count)
+                curr_var = next_var 
+                curr_count = 1
+        if curr_count == 1:
+            res += curr_var
+        else:
+            res += "%s^%i" % (curr_var, curr_count)
+        print(res)
+        return res
+                
+
+    
+    def poly_to_symbols(self, poly):
+        temp_results = [[] for _ in range(self.max_degree + 1)]
+        for term, coeff in poly.coefficients.items():
+            degree = 0 if term == "1" else len(term)
+            print(self._term_to_symbols(term))
+            temp_results[degree] += ["%.2f%s" % (coeff, 
+                                                 self._term_to_symbols(term))] 
+
+        return " + ".join([" + ".join(deg_results) for deg_results in temp_results])
+
 
 class polynomial(object):
     def __init__(self, family, coefficients):
         self.family = family
         self.coefficients = coefficients
         self.my_max_degree = max([len(term) for term in self.coefficients.keys()])
-#        self.symbolic = family.poly_to_symbols(self)
 
     def values_to_dict(self, values):
         return {var: values[i] for i, var in enumerate(self.family.variables)}  
@@ -94,6 +131,9 @@ class polynomial(object):
 
     def __mul__(self, poly2):
         return self.family.mult(self, poly2)
+
+    def to_symbols(self):
+        return self.family.poly_to_symbols(self)
 
 
 if __name__ == "__main__":
@@ -141,3 +181,6 @@ if __name__ == "__main__":
     multiplied = x2c1 * yplus2
     print(multiplied.coefficients)
     print(multiplied.my_max_degree)
+
+    print(x2c1.to_symbols())
+    print(multiplied.to_symbols())
