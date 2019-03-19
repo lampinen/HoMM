@@ -71,9 +71,26 @@ class polynomial_family(object):
         for term1, coefficient1 in poly1.coefficients.items(): 
             for term2, coefficient2 in poly2.coefficients.items():
                 combined_term = self._mult_combine_terms(term1, term2)
-                coeffs[combined_term] = coefficient1 * coefficient2
+                if combined_term in coeffs:
+                    coeffs[combined_term] += coefficient1 * coefficient2
+                else:
+                    coeffs[combined_term] = coefficient1 * coefficient2
 
         return polynomial(self, coeffs)
+
+
+    def pow(self, poly, power):
+        if poly.my_max_degree**power > self.max_degree:
+            raise ValueError("This power would produce too high-degree a result for this family")
+
+        if power != int(power):
+            raise NotImplementedError("Non-integer powers are not implemented")
+
+        new_poly = polynomial(self, poly.coefficients)
+        for i in range(power-1):
+            new_poly = new_poly * poly
+
+        return new_poly 
 
 
     def permute_vars(self, poly, permutation):
@@ -116,15 +133,18 @@ class polynomial_family(object):
                 
 
     
-    def poly_to_symbols(self, poly):
+    def poly_to_symbols(self, poly, strip_spaces=False):
         temp_results = [[] for _ in range(self.max_degree + 1)]
         for term, coeff in poly.coefficients.items():
             degree = 0 if term == "1" else len(term)
             temp_results[degree] += [" %.2f%s " % (coeff, 
                                                  self._term_to_symbols(term))] 
         temp_results = [l for l in temp_results if l != []]
+        res = "+".join(["+".join(deg_results) for deg_results in temp_results])[1:]
+        if strip_spaces:
+            res = res.replace(" ", "")
 
-        return "+".join(["+".join(deg_results) for deg_results in temp_results])[1:]
+        return res 
 
 
 class polynomial(object):
@@ -132,6 +152,9 @@ class polynomial(object):
         self.family = family
         self.coefficients = coefficients
         self.my_max_degree = max([len(term) for term in self.coefficients.keys()])
+        self.relevant_variables = [v for v in self.family.variables if any([v in term for term in self.coefficients])]
+        if "1" in self.coefficients:
+            self.relevant_variables.append("1")
 
     def values_to_dict(self, values):
         return {var: values[i] for i, var in enumerate(self.family.variables)}  
@@ -140,16 +163,30 @@ class polynomial(object):
         return self.family.evaluate(self.coefficients, self.values_to_dict(values))
 
     def __add__(self, poly2):
+        if isinstance(poly2, int) or isinstance(poly2, float): # constant addition 
+            new_coeffs = {t: c for t, c in self.coefficients.items()}
+            if "1" in new_coeffs:
+                new_coeffs["1"] += poly2
+            else:
+                new_coeffs["1"] = poly2
+            return polynomial(self.family, new_coeffs)
         return self.family.add(self, poly2)
 
     def __mul__(self, poly2):
+        if isinstance(poly2, int) or isinstance(poly2, float): # scalar multiplication
+            return polynomial(
+                self.family, {t: poly2*c for t, c in self.coefficients.items()})
         return self.family.mult(self, poly2)
+
+
+    def __pow__(self, power):
+        return self.family.pow(self, power) 
 
     def permute_vars(self, permutation):
         return self.family.permute_vars(self, permutation)
 
-    def to_symbols(self):
-        return self.family.poly_to_symbols(self)
+    def to_symbols(self, strip_spaces=False):
+        return self.family.poly_to_symbols(self, strip_spaces=strip_spaces)
 
 
 if __name__ == "__main__":
@@ -160,6 +197,7 @@ if __name__ == "__main__":
     x2c1 = polynomial(p_fam, coeffs)
     print("x^2 + 1")
     print(x2c1.my_max_degree)
+    print(x2c1.relevant_variables)
     print(x2c1.evaluate([1, 1, 1]))
     print(x2c1.evaluate([1, 2, 1]))
     print(x2c1.evaluate([2, 1, 1]))
@@ -172,6 +210,7 @@ if __name__ == "__main__":
     print(coeffs)
     xy2plus2z = polynomial(p_fam, coeffs)
     print(xy2plus2z.my_max_degree)
+    print(xy2plus2z.relevant_variables)
     print(xy2plus2z.evaluate([1, 1, 1]))
     print(xy2plus2z.evaluate([1, 2, 1]))
     print(xy2plus2z.evaluate([2, 1, 1]))
@@ -198,13 +237,27 @@ if __name__ == "__main__":
     print(multiplied.coefficients)
     print(multiplied.my_max_degree)
 
+    print("Symbols")
     print(x2c1.to_symbols())
     print(yplus2.to_symbols())
     print(multiplied.to_symbols())
+    print(multiplied.to_symbols(strip_spaces=True))
 
+    print("Scalar multiplication")
+    print((x2c1 * 2).to_symbols())
+    print((yplus2 * 3.4).to_symbols())
+
+    print("Scalar addition")
+    print((x2c1  +  2).to_symbols())
+    print((yplus2 + 3.4).to_symbols())
 
     print("permuting")
     permuted1 = yplus2.permute_vars([2, 0, 1])
     print(permuted1.to_symbols())
     permuted_multiplied = multiplied.permute_vars([0, 2, 1])
     print(permuted_multiplied.to_symbols())
+
+    print("Powers")
+    print((yplus2 ** 1).to_symbols())
+    print((yplus2 ** 2).to_symbols())
+    print((yplus2 ** 3).to_symbols())
