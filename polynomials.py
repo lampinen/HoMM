@@ -1,4 +1,10 @@
 import numpy as np
+from itertools import combinations, chain
+
+def powerset(iterable):
+    "powerset([1,2,3]) --> () (1,) (2,) (3,) (1,2) (1,3) (2,3) (1,2,3)"
+    s = list(iterable)
+    return chain.from_iterable(combinations(s, r) for r in range(len(s)+1))
 
 class polynomial_family(object):
     def __init__(self, num_variables, max_degree=2):
@@ -65,7 +71,7 @@ class polynomial_family(object):
 
     def mult(self, poly1, poly2):
         if poly1.my_max_degree + poly2.my_max_degree > self.max_degree:
-            raise ValueError("This multiplication would produce too high-degree a result for this family")
+            raise ValueError("This multiplication would produce too high-degree a result for this family: %s %s" % (poly1.to_symbols(), poly2.to_symbols()))
 
         coeffs = {} 
         for term1, coefficient1 in poly1.coefficients.items(): 
@@ -101,7 +107,9 @@ class polynomial_family(object):
             if term == "1": 
                 new_term = "1"
             else:
-                new_term = tuple([new_var[var] for var in list(term)])
+                new_term = [new_var[var] for var in list(term)]
+                new_term.sort(key=lambda x: int(x[1:]))
+                new_term = tuple(new_term)
             new_coeffs[new_term] = coef
 
         return polynomial(self, new_coeffs)
@@ -130,7 +138,6 @@ class polynomial_family(object):
         else:
             res += "%s ^ %i " % (curr_var, curr_count)
         return res
-                
 
     
     def poly_to_symbols(self, poly, strip_spaces=False):
@@ -147,11 +154,34 @@ class polynomial_family(object):
         return res 
 
 
+    def sample_polynomial(self, coefficient_mean=0, coefficient_sd=2.5,
+                          intercept_probability=0.5, term_probability=0.5):
+        num_relevant_variables = np.random.randint(len(self.variables) + 1)
+        coefficients = {}
+        while coefficients == {}:
+            if num_relevant_variables == 0 or np.random.rand() < intercept_probability: 
+                constant_coefficient = np.random.randn() * coefficient_sd + coefficient_mean
+                coefficients["1"] = constant_coefficient
+
+            relevant_variables = [self.variables[i] for i in sorted(np.random.permutation(len(self.variables))[:num_relevant_variables])]
+            possible_terms = powerset(relevant_variables)
+            next(possible_terms) # get rid of the empty set
+            for term in possible_terms:
+                if len(term) > self.max_degree:
+                    break
+                if np.random.rand() > term_probability:
+                    continue
+                this_coefficient = np.random.randn() * coefficient_sd + coefficient_mean
+                coefficients[term] = this_coefficient 
+
+        return polynomial(self, coefficients)
+
+
 class polynomial(object):
     def __init__(self, family, coefficients):
         self.family = family
         self.coefficients = coefficients
-        self.my_max_degree = max([len(term) for term in self.coefficients.keys()])
+        self.my_max_degree = max([len(term) for term in self.coefficients.keys() if isinstance(term, tuple)] + [0])
         self.relevant_variables = [v for v in self.family.variables if any([v in term for term in self.coefficients])]
         if "1" in self.coefficients:
             self.relevant_variables.append("1")
