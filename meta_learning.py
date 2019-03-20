@@ -437,3 +437,130 @@ class meta_model(object):
 #        print(self.combined_meta_inputs)
 #        print(self.guess_base_function_emb)
 #        print(self.guess_meta_bf_function_emb)
+
+        # hyper_network: emb -> (f: emb -> emb)
+        self.feed_embedding_ph = tf.placeholder(np.float32,
+                                                [1, num_hidden_hyper])
+
+        num_task_hidden_layers = config["num_task_hidden_layers"]
+
+        tw_range = config["task_weight_weight_mult"]/np.sqrt(
+            num_hidden * num_hidden_hyper) # yields a very very roughly O(1) map
+        task_weight_gen_init = tf.random_uniform_initializer(-tw_range,
+                                                             tw_range)
+
+        def _hyper_network(function_embedding, reuse=True):
+            with tf.variable_scope('hyper', reuse=reuse):
+                hyper_hidden = function_embedding
+                for _ in range(config["num_hyper_hidden_layers"]):
+                    hyper_hidden = slim.fully_connected(hyper_hidden, num_hidden_hyper,
+                                                        activation_fn=internal_nonlinearity)
+                    hyper_hidden = tf.nn.dropout(hyper_hidden, self.keep_prob_ph)
+
+                hidden_weights = []
+                hidden_biases = []
+
+                task_weights = slim.fully_connected(hyper_hidden, num_hidden*(num_hidden_hyper +(num_task_hidden_layers-1)*num_hidden + num_hidden_hyper),
+                                                    activation_fn=None,
+                                                    weights_initializer=task_weight_gen_init)
+                task_weights = tf.nn.dropout(task_weights, self.keep_prob_ph)
+
+                task_weights = tf.reshape(task_weights, [-1, num_hidden, (num_hidden_hyper + (num_task_hidden_layers-1)*num_hidden + num_hidden_hyper)])
+                task_biases = slim.fully_connected(hyper_hidden, num_task_hidden_layers * num_hidden + num_hidden_hyper,
+                                                   activation_fn=None)
+
+                Wi = tf.transpose(task_weights[:, :, :num_hidden_hyper], perm=[0, 2, 1])
+                bi = task_biases[:, :num_hidden]
+                hidden_weights.append(Wi)
+                hidden_biases.append(bi)
+                for i in range(1, num_task_hidden_layers):
+                    Wi = tf.transpose(task_weights[:, :, input_size+(i-1)*num_hidden:input_size+i*num_hidden], perm=[0, 2, 1])
+                    bi = task_biases[:, num_hidden*i:num_hidden*(i+1)]
+                    hidden_weights.append(Wi)
+                    hidden_biases.append(bi)
+                Wfinal = task_weights[:, :, -num_hidden_hyper:]
+                bfinal = task_biases[:, -num_hidden_hyper:]
+
+                for i in range(num_task_hidden_layers):
+                    hidden_weights[i] = tf.squeeze(hidden_weights[i], axis=0)
+                    hidden_biases[i] = tf.squeeze(hidden_biases[i], axis=0)
+
+                Wfinal = tf.squeeze(Wfinal, axis=0)
+                bfinal = tf.squeeze(bfinal, axis=0)
+                hidden_weights.append(Wfinal)
+                hidden_biases.append(bfinal)
+                return hidden_weights, hidden_biases
+
+        self.base_task_params = _hyper_network(self.guess_base_function_emb,
+                                               reuse=False)
+        self.meta_t_task_params = _hyper_network(self.guess_meta_t_function_emb)
+        self.meta_m_task_params = _hyper_network(self.guess_meta_m_function_emb)
+        self.meta_bf_task_params = _hyper_network(self.guess_meta_bf_function_emb)
+        self.fed_emb_task_params = _hyper_network(self.feed_embedding_ph)
+
+        # task network
+        def _task_network(task_params, processed_input):
+            hweights, hbiases = task_params
+            task_hidden = processed_input
+            for i in range(num_task_hidden_layers):
+                task_hidden = internal_nonlinearity(
+                    tf.matmul(task_hidden, hweights[i]) + hbiases[i])
+
+            raw_output = tf.matmul(task_hidden, hweights[-1]) + hbiases[-1]
+
+            return raw_output
+
+        self.base_raw_output = _task_network(self.base_task_params,
+                                             processed_input)
+        self.base_output = _output_mapping(self.base_raw_output)
+
+        self.base_raw_output_fed_emb = _task_network(self.fed_emb_task_params,
+                                                     processed_input)
+        self.base_output_fed_emb = _output_mapping(self.base_raw_output_fed_emb)
+
+        self.meta_t_raw_output = _task_network(self.meta_t_task_params,
+                                               self.meta_input_ph)
+        self.meta_t_output = tf.nn.sigmoid(self.meta_t_raw_output)
+
+        self.meta_m_output = _task_network(self.meta_m_task_params,
+                                           self.meta_input_ph)
+
+        self.meta_bf_output = _task_network(self.meta_bf_task_params,
+                                            self.combined_meta_inputs)
+
+        self.base_loss = tf.square(self.base_output - self.base_target_ph)
+        self.total_base_loss = tf.reduce_mean(self.base_loss)
+
+        self.base_fed_emb_loss = tf.square(
+            self.base_output_fed_emb - self.base_target_ph)
+        self.total_base_fed_emb_loss = tf.reduce_mean(self.base_fed_emb_loss)
+
+        self.meta_t_loss = tf.reduce_sum(
+            tf.square(self.meta_t_output - processed_class), axis=1)
+        self.total_meta_t_loss = tf.reduce_mean(self.meta_t_loss)
+
+        self.meta_m_loss = tf.reduce_sum(
+            tf.square(self.meta_m_output - self.meta_target_ph), axis=1)
+        self.total_meta_m_loss = tf.reduce_mean(self.meta_m_loss)
+
+        self.meta_bf_loss = tf.reduce_sum(
+            tf.square(self.meta_bf_output - self.meta_target_ph), axis=1)
+        self.total_meta_bf_loss = tf.reduce_mean(self.meta_bf_loss)
+
+        optimizer = tf.train.RMSPropOptimizer(self.lr_ph)
+
+        self.base_train = optimizer.minimize(self.total_base_loss)
+        self.meta_t_train = optimizer.minimize(self.total_meta_t_loss)
+        self.meta_m_train = optimizer.minimize(self.total_meta_m_loss)
+        self.meta_bf_train = optimizer.minimize(self.total_meta_bf_loss)
+
+        # Saver
+        self.saver = tf.train.Saver()
+
+        # initialize
+        sess_config = tf.ConfigProto()
+        sess_config.gpu_options.allow_growth = True
+        self.sess = tf.Session(config=sess_config)
+        self.sess.run(tf.global_variables_initializer())
+
+model = meta_model(config)
