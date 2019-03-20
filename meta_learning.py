@@ -46,7 +46,7 @@ config = {
     "min_meta_learning_rate": 3e-7,
 
     "refresh_meta_cache_every": 1, # how many epochs between updates to meta_cache
-    "refresh_mem_buffs_every": 50, # how many epochs between updates to buffers
+#    "refresh_mem_buffs_every": 50, # how many epochs between updates to buffers
 
     "max_base_epochs": 10000,
     "max_new_epochs": 1000,
@@ -72,12 +72,13 @@ config = {
     "early_stopping_thresh": 0.05,
     "num_base_tasks": 100, # prior to meta-augmentation
     "num_new_tasks": 10,
+    "poly_coeff_sd": 2.5,
 
     "meta_add_vals": [-3, -2, -1, 1, 3],
     "meta_mult_vals": [-3, -1, 3],
-    "num_meta_binary_pairss": 200, # for binary tasks like multiplying 
-                                   # polynomials, how many pairs does the 
-                                   # system see?
+    "num_meta_binary_pairs": 200, # for binary tasks like multiplying 
+                                  # polynomials, how many pairs does the 
+                                  # system see?
     "new_meta_tasks": [],
     "new_meta_mappings": ["permute_3210", "add_2", "add_-2", "mult_2", "mult_-2"],
     
@@ -102,8 +103,8 @@ config["base_meta_binary_funcs"] = ["binary_sum", "binary_mult"]
 config["base_meta_tasks"] = [x for x in config["base_meta_tasks"] if x not in config["new_meta_tasks"]]
 config["meta_mappings"] = [x for x in config["base_meta_mappings"] if x not in config["new_meta_mappings"]]
 
-config["base_tasks"] = [poly_fam.sample_polynomial() for _ in range(config["num_base_tasks"])]
-config["new_tasks"] = [poly_fam.sample_polynomial() for _ in range(config["num_new_tasks"])]
+config["base_tasks"] = [poly_fam.sample_polynomial(coefficient_sd=config["poly_coeff_sd"]) for _ in range(config["num_base_tasks"])]
+config["new_tasks"] = [poly_fam.sample_polynomial(coefficient_sd=config["poly_coeff_sd"]) for _ in range(config["num_new_tasks"])]
                         
 # tasks implied by meta mappings, network will also be trained on these  
 config["implied_base_tasks"] = [] 
@@ -113,7 +114,7 @@ config["implied_new_tasks"] = []
 
 def _stringify_polynomial(p):
     """Helper for printing, etc."""
-    return p.to_symbols(strips_spaces=True)
+    return p.to_symbols(strip_spaces=True)
 
 def _save_config(filename, config):
     with open(filename, "w") as fout:
@@ -122,6 +123,19 @@ def _save_config(filename, config):
             fout.write(key + ", " + str(value) + "\n")
 
 var_scale_init = tf.contrib.layers.variance_scaling_initializer(factor=1., mode='FAN_AVG')
+
+
+def get_distinct_random_choices(values, num_choices_per, num_sets,
+                                replace=False):
+    sets = []
+    while len(sets) < num_sets:
+        candidate_set = set(np.random.choice(values, num_choices_per, 
+                                             replace=replace))
+        if candidate_set not in sets:
+            sets.append(candidate_set)
+        
+    return [np.random.permutation(list(s)) for s in sets]
+
 
 def _get_meta_pairings(base_tasks, meta_tasks, meta_mappings, meta_binary_funcs):
     """Gets which tasks map to which other tasks under the meta_tasks (i.e. the
@@ -132,60 +146,66 @@ def _get_meta_pairings(base_tasks, meta_tasks, meta_mappings, meta_binary_funcs)
     for mt in all_meta_tasks:
         if mt == "square":
             for poly in base_tasks: 
+                if poly.my_max_degree**2 > poly.family.max_degree:
+                    continue
                 other = poly ** 2
                 implied_tasks.append(other)
-                meta_pairings[mt].append((_stringify_polynomial(task),
+                meta_pairings[mt].append((_stringify_polynomial(poly),
                                           _stringify_polynomial(other)))
         elif mt[:3] == "add":
             c = float(mt[4:])
             for poly in base_tasks: 
                 other = poly + c
                 implied_tasks.append(other)
-                meta_pairings[mt].append((_stringify_polynomial(task),
+                meta_pairings[mt].append((_stringify_polynomial(poly),
                                           _stringify_polynomial(other)))
         elif mt[:4] == "mult":
             c = float(mt[5:])
             for poly in base_tasks: 
                 other = poly * c
                 implied_tasks.append(other)
-                meta_pairings[mt].append((_stringify_polynomial(task),
+                meta_pairings[mt].append((_stringify_polynomial(poly),
                                           _stringify_polynomial(other)))
         elif mt[:7] == "permute":
             perm = [int(c) for c in mt[8:]] 
             for poly in base_tasks: 
                 other = poly.permute_vars(perm) 
                 implied_tasks.append(other)
-                meta_pairings[mt].append((_stringify_polynomial(task),
+                meta_pairings[mt].append((_stringify_polynomial(poly),
                                           _stringify_polynomial(other)))
         elif mt == "is_constant_polynomial":
             for poly in base_tasks: 
                 truth_val = poly.my_max_degree == 0 
-                meta_pairings[mt].append((_stringify_polynomial(task),
+                meta_pairings[mt].append((_stringify_polynomial(poly),
                                           1*truth_val))
         elif mt == "is_intercept_nonzero":
             for poly in base_tasks: 
                 truth_val = "1" in poly.coefficients and poly.coefficients["1"] != 0.
-                meta_pairings[mt].append((_stringify_polynomial(task),
+                meta_pairings[mt].append((_stringify_polynomial(poly),
                                           1*truth_val))
         elif mt[:3] == "is_":
             var = mt.split("_")[1]
             for poly in base_tasks: 
                 truth_val = var in poly.relevant_variables 
-                meta_pairings[mt].append((_stringify_polynomial(task),
+                meta_pairings[mt].append((_stringify_polynomial(poly),
                                           1*truth_val))
         elif mt[:6] == "binary":
             operation = mt[7:]
             if operation not in ["sum", "mult"]:
                 raise ValueError("Unknown meta task: %s" % meta_task)
-            pairings = 
-            for poly1 in base_tasks:
-                for poly2 in base_tasks:
-                    if operation == "sum":
-                        other = poly1 + poly2
-                    elif operation == "mult":
-                        other = poly1 * poly2
+            pairings = get_distinct_random_choices(
+                values=base_tasks, num_choices_per=2,
+                num_sets=config["num_meta_binary_pairs"], replace=False)  
+            for poly1, poly2 in pairings:
+                if operation == "sum":
+                    other = poly1 + poly2
+                elif operation == "mult":
+                    if poly1.my_max_degree + poly2.my_max_degree > poly1.family.max_degree:
+                        continue
+                    other = poly1 * poly2
                 implied_tasks.append(other)
-                meta_pairings[mt].append((_stringify_polynomial(task),
+                meta_pairings[mt].append((_stringify_polynomial(poly1),
+                                          _stringify_polynomial(poly2),
                                           _stringify_polynomial(other)))
 
         else: 
@@ -227,3 +247,72 @@ class memory_buffer(object):
     def get_memories(self): 
         return self.input_buffer, self.outcome_buffer
 
+
+class meta_model(object):
+    """A meta-learning model for polynomials."""
+    def __init__(self, config):
+        """args:
+            config: a config dict, see above
+        """
+        self.config = config
+        self.memory_buffer_size = config["memory_buffer_size"]
+        self.meta_batch_size = config["meta_batch_size"]
+        self.num_input = config["num_input"]
+        self.num_output = config["num_output"]
+        self.tkp = 1. - config["train_drop_prob"] # drop prob -> keep prob
+
+        base_tasks = config["base_tasks"]
+        base_meta_tasks = config["base_meta_tasks"]
+        base_meta_mappings = config["base_meta_mappings"]
+        base_meta_binary_funcs = config["base_meta_binary_funcs"]
+
+        new_tasks = config["new_tasks"]
+        new_meta_tasks = config["new_meta_tasks"]
+        new_meta_mappings = config["new_meta_mappings"]
+
+        # base datasets / memory_buffers
+        self.base_tasks = base_tasks
+        self.base_task_names = [_stringify_polynomial(t) for t in base_tasks]
+
+        # new datasets / memory_buffers
+        self.new_tasks = new_tasks
+        self.new_task_names = [_stringify_polynomial(t) for t in new_tasks]
+
+        self.all_base_tasks = self.base_tasks + self.new_tasks
+
+        self.memory_buffers = {_stringify_polynomial(t): memory_buffer(
+            self.memory_buffer_size, self.num_input,
+            self.num_output) for t in self.all_base_tasks}
+
+        self.base_meta_tasks = base_meta_tasks
+        self.base_meta_mappings = base_meta_mappings
+        self.base_meta_binary_funcs = base_meta_binary_funcs
+        self.all_base_meta_tasks = base_meta_tasks + base_meta_mappings + base_meta_binary_funcs
+        self.new_meta_tasks = new_meta_tasks
+        self.new_meta_mappings = new_meta_mappings
+        self.all_new_meta_tasks = new_meta_tasks + new_meta_mappings
+        self.all_meta_tasks = self.all_base_meta_tasks + self.all_new_meta_tasks
+        self.meta_dataset_cache = {t: {} for t in self.all_meta_tasks} # will cache datasets for a certain number of epochs
+                                                                       # both to speed training and to keep training targets
+                                                                       # consistent
+
+        self.all_initial_tasks = self.base_tasks + self.all_base_meta_tasks
+        self.all_new_tasks = self.new_tasks + self.all_new_meta_tasks
+        self.all_tasks = self.all_initial_tasks + self.all_new_tasks
+
+        # think that's enough redundant variables?
+        self.num_tasks = num_tasks = len(self.all_tasks)
+
+        self.meta_pairings_base, self.base_tasks_implied = _get_meta_pairings(
+            self.base_tasks, self.base_meta_tasks, self.base_meta_mappings,
+            self.base_meta_binary_funcs)
+
+        self.meta_pairings_full, self.full_tasks_implied = _get_meta_pairings(
+            self.base_tasks + self.new_tasks,
+            self.base_meta_tasks + self.new_meta_tasks,
+            self.base_meta_mappings + self.new_meta_mappings,
+            self.base_meta_binary_funcs)
+
+#        for key, value in self.meta_pairings_base.items():
+#            print(key)
+#            print(value)
