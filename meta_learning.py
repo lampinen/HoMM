@@ -316,3 +316,124 @@ class meta_model(object):
 #        for key, value in self.meta_pairings_base.items():
 #            print(key)
 #            print(value)
+        
+        # network
+
+        # base task input
+        input_size = config["num_input"]
+        output_size = config["num_output"]
+
+        self.base_input_ph = tf.placeholder(
+            tf.float32, shape=[None, input_size])
+        self.base_target_ph = tf.placeholder(
+            tf.float32, shape=[None, output_size])
+
+        self.lr_ph = tf.placeholder(tf.float32)
+        self.keep_prob_ph = tf.placeholder(tf.float32) # dropout keep prob
+
+        num_hidden = config["num_hidden"]
+        num_hidden_hyper = config["num_hidden_hyper"]
+        internal_nonlinearity = config["internal_nonlinearity"]
+        output_nonlinearity = config["output_nonlinearity"]
+        input_processing_1 = slim.fully_connected(self.base_input_ph, num_hidden,
+                                                  activation_fn=internal_nonlinearity)
+
+        input_processing_2 = slim.fully_connected(input_processing_1, num_hidden,
+                                                  activation_fn=internal_nonlinearity)
+
+        processed_input = slim.fully_connected(input_processing_2, num_hidden_hyper,
+                                               activation_fn=internal_nonlinearity)
+        self.processed_input = processed_input
+
+        all_target_processor_nontf = random_orthogonal(num_hidden_hyper)[:, :output_size + 1]
+        self.target_processor_nontf = all_target_processor_nontf[:, :output_size]
+        self.target_processor = tf.get_variable('target_processor',
+                                                shape=[num_hidden_hyper, output_size],
+                                                initializer=tf.constant_initializer(self.target_processor_nontf))
+        processed_targets = tf.matmul(self.base_target_ph, tf.transpose(self.target_processor))
+
+        def _output_mapping(X):
+            """hidden space mapped back to T/F output logits"""
+            res = tf.matmul(X, self.target_processor)
+            return res
+
+        # meta task input
+        self.meta_input_ph = tf.placeholder(tf.float32, shape=[None, num_hidden_hyper])
+        self.meta_input_2_ph = tf.placeholder(tf.float32, shape=[None, num_hidden_hyper])
+        self.meta_target_ph = tf.placeholder(tf.float32, shape=[None, num_hidden_hyper])
+        self.meta_class_ph = tf.placeholder(tf.float32, shape=[None, 1])
+        # last is for meta classification tasks
+
+        self.class_processor_nontf = all_target_processor_nontf[:, output_size:]
+        self.class_processor = tf.get_variable('class_processor',
+                                               shape=self.class_processor_nontf.shape,
+                                               initializer=tf.constant_initializer(self.class_processor_nontf))
+        processed_class = tf.matmul(self.meta_class_ph, tf.transpose(self.class_processor))
+
+        # function embedding "guessing" network / meta network
+        # {(emb_in, emb_out), ...} -> emb
+        self.guess_input_mask_ph = tf.placeholder(tf.bool, shape=[None]) # which datapoints get excluded from the guess
+
+        def _meta_network(embedded_inputs, embedded_targets,
+                           mask_ph=self.guess_input_mask_ph, reuse=True):
+            with tf.variable_scope('meta/network', reuse=reuse):
+                guess_input = tf.concat([embedded_inputs,
+                                         embedded_targets], axis=-1)
+                guess_input = tf.boolean_mask(guess_input,
+                                              self.guess_input_mask_ph)
+                guess_input = tf.nn.dropout(guess_input, self.keep_prob_ph)
+
+                gh_1 = slim.fully_connected(guess_input, num_hidden_hyper,
+                                            activation_fn=internal_nonlinearity)
+                gh_1 = tf.nn.dropout(gh_1, self.keep_prob_ph)
+                gh_2 = slim.fully_connected(gh_1, num_hidden_hyper,
+                                            activation_fn=internal_nonlinearity)
+                gh_2 = tf.nn.dropout(gh_2, self.keep_prob_ph)
+                gh_2b = tf.reduce_max(gh_2, axis=0, keep_dims=True)
+                gh_3 = slim.fully_connected(gh_2b, num_hidden_hyper,
+                                            activation_fn=internal_nonlinearity)
+                gh_3 = tf.nn.dropout(gh_3, self.keep_prob_ph)
+
+                guess_embedding = slim.fully_connected(gh_3, num_hidden_hyper,
+                                                       activation_fn=None)
+                guess_embedding = tf.nn.dropout(guess_embedding, self.keep_prob_ph)
+                return guess_embedding
+
+        self.guess_base_function_emb = _meta_network(processed_input,
+                                                     processed_targets,
+                                                     reuse=False)
+
+        self.guess_meta_t_function_emb = _meta_network(self.meta_input_ph,
+                                                       processed_class)
+
+        self.guess_meta_m_function_emb = _meta_network(self.meta_input_ph,
+                                                       self.meta_target_ph)
+
+        # for binary tasks 
+        def _combine_inputs(inputs_1, inputs_2, reuse=True):
+            with tf.variable_scope('meta/bi_combination', reuse=reuse):
+                c_input = tf.concat([inputs_1,
+                                     inputs_2], axis=-1)
+                c_input = tf.nn.dropout(c_input, self.keep_prob_ph)
+
+                ch_1 = slim.fully_connected(c_input, num_hidden_hyper,
+                                            activation_fn=internal_nonlinearity)
+                ch_1 = tf.nn.dropout(ch_1, self.keep_prob_ph)
+                ch_2 = slim.fully_connected(ch_1, num_hidden_hyper,
+                                            activation_fn=internal_nonlinearity)
+                ch_2 = tf.nn.dropout(ch_2, self.keep_prob_ph)
+                ch_3 = slim.fully_connected(ch_2, num_hidden_hyper,
+                                            activation_fn=internal_nonlinearity)
+                combined = tf.nn.dropout(ch_3, self.keep_prob_ph)
+                return combined 
+
+        self.combined_meta_inputs = _combine_inputs(self.meta_input_ph,
+                                                    self.meta_input_2_ph,
+                                                    reuse=False)
+
+        self.guess_meta_bf_function_emb = _meta_network(
+            self.combined_meta_inputs, self.meta_target_ph)
+    
+#        print(self.combined_meta_inputs)
+#        print(self.guess_base_function_emb)
+#        print(self.guess_meta_bf_function_emb)
