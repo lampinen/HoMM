@@ -1,4 +1,4 @@
-import numpy
+import numpy as np
 
 class polynomial_family(object):
     def __init__(self, num_variables, max_degree=2):
@@ -203,6 +203,8 @@ if __name__ == "__main__":
     print(x2c1.evaluate([2, 1, 1]))
     print(x2c1.evaluate([2, 2, 1]))
     print(x2c1.evaluate([2, 2, 2]))
+    print(x2c1.evaluate(np.array([2, 2, 2])))
+
 
     print("xy^2 + 2z")
     coeffs = {("X0", "X1", "X1"): 1, 
