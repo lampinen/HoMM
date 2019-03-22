@@ -425,6 +425,8 @@ class meta_model(object):
                 ch_3 = slim.fully_connected(ch_2, num_hidden_hyper,
                                             activation_fn=internal_nonlinearity)
                 combined = tf.nn.dropout(ch_3, self.keep_prob_ph)
+                # also include direct inputs averaged
+                combined = 0.5 * combined + 0.25 * (inputs_1 + inputs_2) 
                 return combined 
 
         self.combined_meta_inputs = _combine_inputs(self.meta_input_ph,
@@ -562,5 +564,116 @@ class meta_model(object):
         sess_config.gpu_options.allow_growth = True
         self.sess = tf.Session(config=sess_config)
         self.sess.run(tf.global_variables_initializer())
+        self.fill_buffers(num_data_points=config["memory_buffer_size"],
+                          include_new=True)
+
+        self.refresh_meta_dataset_cache()
+
+
+    def fill_buffers(self, num_data_points=1, include_new=False):
+        """Add new "experiences" to memory buffers."""
+        if include_new:
+            this_tasks = self.all_base_tasks
+        else:
+            this_tasks = self.base_tasks
+        for t in this_tasks:
+            bufff = self.memory_buffers[_stringify_polynomial(t)]
+            x_data = np.zeros(num_data_points, self.num_inputs)
+            y_data = np.zeros(num_data_points, self.num_outputs)
+            for point_i in range(num_data_points):
+                point = t.family.sample_point()
+                x_data[point_i, :] = point
+                y_data[point_i, :] = t.evaluate(point)
+            buff.insert(x_data, y_data)
+
+
+    def _random_guess_mask(self, dataset_length, meta_batch_size=None):
+        if meta_batch_size is None:
+            meta_batch_size = config["meta_batch_size"]
+        mask = np.zeros(dataset_length, dtype=np.bool)
+        indices = np.random.permutation(dataset_length)[:meta_batch_size]
+        mask[indices] = True
+        return mask
+
+
+    def base_train_step(self, memory_buffer, lr):
+        input_buff, output_buff = memory_buffer.get_memories()
+        feed_dict = {
+            self.base_input_ph: input_buff,
+            self.guess_input_mask_ph: self._random_guess_mask(self.memory_buffer_size),
+            self.base_target_ph: output_buff,
+            self.keep_prob_ph: self.tkp,
+            self.lr_ph: lr
+        }
+        self.sess.run(self.base_train, feed_dict=feed_dict)
+
+
+    def base_eval(self, memory_buffer, return_rewards=True, meta_batch_size=None):
+        input_buff, output_buff = memory_buffer.get_memories()
+        feed_dict = {
+            self.base_input_ph: input_buff,
+            self.guess_input_mask_ph: self._random_guess_mask(
+                self.memory_buffer_size, meta_batch_size=meta_batch_size),
+            self.base_target_ph: output_buff,
+            self.keep_prob_ph: 1.
+        }
+        fetches = [self.total_base_loss]
+        res = self.sess.run(fetches, feed_dict=feed_dict)
+        return res
+
+
+   def run_base_eval(self, include_new=False, sweep_meta_batch_sizes=False):
+        """sweep_meta_batch_sizes: False or a list of meta batch sizes to try"""
+        if include_new:
+            tasks = self.all_base_tasks
+        else:
+            tasks = self.base_tasks
+
+        losses = [] 
+        if sweep_meta_batch_sizes:
+            for meta_batch_size in sweep_meta_batch_sizes:
+                this_losses = [] 
+                for task in tasks:
+                    task_str = _stringify_polynomial(task)
+                    memory_buffer = self.memory_buffers[task_str]
+                    res = self.base_eval(memory_buffer, 
+                                         meta_batch_size=meta_batch_size)
+                    this_losses.append(res[0])
+                losses.append(this_losses)
+        else:
+            for task in tasks:
+                task_str = _stringify_polynomial(task)
+                memory_buffer = self.memory_buffers[task_str]
+                res = self.base_eval(memory_buffer)
+                losses.append(res[0])
+
+        names = [_stringify_polynomial(t) for t in tasks]
+        return names, losses
+
+
+    def base_embedding_eval(self, embedding, memory_buffer, return_rewards=True):
+        input_buff, output_buff = memory_buffer.get_memories()
+        feed_dict = {
+            self.keep_prob_ph: 1.,
+            self.feed_embedding_ph: embedding,
+            self.base_input_ph: input_buff,
+            self.base_target_ph: output_buff
+        }
+        fetches = [self.total_base_fed_emb_loss]
+        res = self.sess.run(fetches, feed_dict=feed_dict)
+        return res
+
+    
+    def get_base_embedding(self, memory_buffer):
+        input_buff, output_buff = memory_buffer.get_memories()
+        feed_dict = {
+            self.keep_prob_ph: 1.,
+            self.base_input_ph: input_buff,
+            self.guess_input_mask_ph: np.ones([self.memory_buffer_size]),
+            self.base_target_ph: output_buff
+        }
+        res = self.sess.run(self.guess_base_function_emb, feed_dict=feed_dict)
+        return res
+
 
 model = meta_model(config)
