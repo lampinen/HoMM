@@ -280,10 +280,6 @@ class meta_model(object):
 
         self.all_base_tasks = self.base_tasks + self.new_tasks
 
-        self.memory_buffers = {_stringify_polynomial(t): memory_buffer(
-            self.memory_buffer_size, self.num_input,
-            self.num_output) for t in self.all_base_tasks}
-
         self.base_meta_tasks = base_meta_tasks
         self.base_meta_mappings = base_meta_mappings
         self.base_meta_binary_funcs = base_meta_binary_funcs
@@ -298,11 +294,8 @@ class meta_model(object):
 
         self.all_initial_tasks = self.base_tasks + self.all_base_meta_tasks
         self.all_new_tasks = self.new_tasks + self.all_new_meta_tasks
-        self.all_tasks = self.all_initial_tasks + self.all_new_tasks
 
         # think that's enough redundant variables?
-        self.num_tasks = num_tasks = len(self.all_tasks)
-
         self.meta_pairings_base, self.base_tasks_implied = _get_meta_pairings(
             self.base_tasks, self.base_meta_tasks, self.base_meta_mappings,
             self.base_meta_binary_funcs)
@@ -312,6 +305,16 @@ class meta_model(object):
             self.base_meta_tasks + self.new_meta_tasks,
             self.base_meta_mappings + self.new_meta_mappings,
             self.base_meta_binary_funcs)
+
+        self.base_tasks_implied_names = [_stringify_polynomial(t) for t in self.base_tasks_implied]
+        self.full_tasks_implied_names = [_stringify_polynomial(t) for t in self.full_tasks_implied]
+
+        self.memory_buffers = {_stringify_polynomial(t): memory_buffer(
+            self.memory_buffer_size, self.num_input,
+            self.num_output) for t in self.all_base_tasks + self.base_tasks_implied + [x for x in self.full_tasks_implied if x not in self.base_tasks_implied]}
+
+        self.all_tasks = self.all_initial_tasks + self.all_new_tasks + self.full_tasks_implied
+        self.num_tasks = num_tasks = len(self.all_tasks)
 
 #        for key, value in self.meta_pairings_base.items():
 #            print(key)
@@ -426,7 +429,11 @@ class meta_model(object):
                                             activation_fn=internal_nonlinearity)
                 combined = tf.nn.dropout(ch_3, self.keep_prob_ph)
                 # also include direct inputs averaged
-                combined = 0.5 * combined + 0.25 * (inputs_1 + inputs_2) 
+                self.combination_weight = tf.get_variable('combination_weight',
+                                                          shape=[],
+                                                          initializer=tf.constant_initializer(0.))
+                c_w = tf.nn.sigmoid(self.combination_weight) 
+                combined = (c_w) * combined + (1.- c_w) * 0.5 * (inputs_1 + inputs_2) 
                 return combined 
 
         self.combined_meta_inputs = _combine_inputs(self.meta_input_ph,
@@ -577,9 +584,9 @@ class meta_model(object):
         else:
             this_tasks = self.base_tasks
         for t in this_tasks:
-            bufff = self.memory_buffers[_stringify_polynomial(t)]
-            x_data = np.zeros(num_data_points, self.num_inputs)
-            y_data = np.zeros(num_data_points, self.num_outputs)
+            buff = self.memory_buffers[_stringify_polynomial(t)]
+            x_data = np.zeros([num_data_points, self.config["num_input"]])
+            y_data = np.zeros([num_data_points, self.config["num_output"]])
             for point_i in range(num_data_points):
                 point = t.family.sample_point()
                 x_data[point_i, :] = point
@@ -622,7 +629,7 @@ class meta_model(object):
         return res
 
 
-   def run_base_eval(self, include_new=False, sweep_meta_batch_sizes=False):
+    def run_base_eval(self, include_new=False, sweep_meta_batch_sizes=False):
         """sweep_meta_batch_sizes: False or a list of meta batch sizes to try"""
         if include_new:
             tasks = self.all_base_tasks
@@ -674,6 +681,165 @@ class meta_model(object):
         }
         res = self.sess.run(self.guess_base_function_emb, feed_dict=feed_dict)
         return res
+
+
+    def get_meta_dataset(self, meta_task, include_new=False):
+        x_data = []
+        x2_data = []
+        y_data = []
+        if include_new:
+            this_base_tasks = self.meta_pairings_full[meta_task]
+        else:
+            this_base_tasks = self.meta_pairings_base[meta_task]
+        for this_tuple in this_base_tasks:
+            if len(this_tuple) == 3: # binary_func 
+                task, task2, other = this_tuple
+                task2_buffer = self.memory_buffers[task2]
+                x2_data.append(self.get_base_embedding(task2_buffer)[0, :])
+            else:
+                task, other = this_tuple
+            task_buffer = self.memory_buffers[task]
+            x_data.append(self.get_base_embedding(task_buffer)[0, :])
+            if other in [0, 1]:  # for classification meta tasks
+                y_data.append([other])
+            else:
+                other_buffer = self.memory_buffers[other]
+                y_data.append(self.get_base_embedding(other_buffer)[0, :])
+        if x2_data != []: # binary func
+            return {"x1": np.array(x_data), "x2": np.array(x2_data),
+                    "y": np.array(y_data)}
+        else:
+            return {"x": np.array(x_data), "y": np.array(y_data)}
+
+
+    def refresh_meta_dataset_cache(self, include_new=False):
+        meta_tasks = self.all_base_meta_tasks 
+        if include_new:
+            meta_tasks += self.all_new_meta_tasks 
+
+        for t in meta_tasks:
+            self.meta_dataset_cache[t] = self.get_meta_dataset(t, include_new)
+
+
+    def meta_loss_eval(self, meta_dataset):
+        feed_dict = {
+            self.keep_prob_ph: 1.,
+            self.guess_input_mask_ph: np.ones([len(meta_dataset["x"])])
+        }
+        y_data = meta_dataset["y"]
+        if y_data.shape[-1] == 1:
+            feed_dict[self.meta_class_ph] = y_data 
+            fetch = self.total_meta_t_loss
+        else:
+            feed_dict[self.meta_target_ph] = y_data 
+            fetch = self.total_meta_m_loss
+
+        if "x1" in meta_dataset: 
+            feed_dict[self.meta_input_ph] = meta_dataset["x1"]
+            feed_dict[self.meta_input_2_ph] = meta_dataset["x2"]
+            fetch = self.total_meta_bf_loss
+        else:
+            feed_dict[self.meta_input_ph] = meta_dataset["x"]
+
+        return self.sess.run(fetch, feed_dict=feed_dict)
+        
+
+    def run_meta_loss_eval(self, include_new=False):
+        meta_tasks = self.all_base_meta_tasks 
+        if include_new:
+            meta_tasks += self.new_meta_tasks 
+
+        names = []
+        losses = []
+        for t in meta_tasks:
+            meta_dataset = self.meta_dataset_cache[t]
+            loss = self.meta_loss_eval(meta_dataset)
+            names.append(t)
+            losses.append(loss)
+
+        return names, losses
+
+
+    def get_meta_embedding(self, meta_dataset):
+        feed_dict = {
+            self.keep_prob_ph: 1.,
+            self.guess_input_mask_ph: np.ones([len(meta_dataset["x"])])
+        }
+        y_data = meta_dataset["y"]
+        if y_data.shape[-1] == 1:
+            feed_dict[self.meta_class_ph] = y_data 
+            fetch = self.guess_meta_t_function_emb
+        else:
+            feed_dict[self.meta_target_ph] = y_data 
+            fetch = self.guess_meta_m_function_emb
+
+        if "x1" in meta_dataset: 
+            feed_dict[self.meta_input_ph] = meta_dataset["x1"]
+            feed_dict[self.meta_input_2_ph] = meta_dataset["x2"]
+            fetch = self.guess_meta_bf_function_emb
+        else:
+            feed_dict[self.meta_input_ph] = meta_dataset["x"]
+
+        return self.sess.run(fetch, feed_dict=feed_dict)
+
+
+    def get_meta_outputs(self, meta_dataset, new_dataset=None):
+        """Get new dataset mapped according to meta_dataset, or just outputs
+        for original dataset if new_dataset is None"""
+        meta_class = meta_dataset["y"].shape[-1] == 1
+
+        if new_dataset is not None:
+            if "x" in meta_dataset:
+                this_x = np.concatenate([meta_dataset["x"], new_dataset["x"]], axis=0)
+                new_x = new_dataset["x"] 
+                this_mask = np.zeros(len(this_x), dtype=np.bool)
+                this_mask[:len(meta_dataset["x"])] = True # use only these to guess
+            else:
+                this_x1 = np.concatenate([meta_dataset["x1"], new_dataset["x1"]], axis=0)
+                this_x2 = np.concatenate([meta_dataset["x2"], new_dataset["x2"]], axis=0)
+                new_x = new_dataset["x1"] # for size only 
+                this_mask = np.zeros(len(this_x1), dtype=np.bool)
+                this_mask[:len(meta_dataset["x1"])] = True # use only these to guess
+
+            if meta_class:
+                this_y = np.concatenate([meta_dataset["y"], np.zeros([len(new_x)])], axis=0)
+            else:
+                this_y = np.concatenate([meta_dataset["y"], np.zeros_like(new_x)], axis=0)
+
+        else:
+            if "x" in meta_dataset:
+                this_x = meta_dataset["x"]
+                this_mask = np.ones(len(this_x), dtype=np.bool)
+            else:
+                this_x1 = meta_dataset["x1"]
+                this_x2 = meta_dataset["x2"]
+                this_mask = np.ones(len(this_x1), dtype=np.bool)
+            this_y = meta_dataset["y"]
+
+        feed_dict = {
+            self.keep_prob_ph: 1.,
+            self.guess_input_mask_ph: this_mask 
+        }
+        if meta_class:
+            feed_dict[self.meta_class_ph] = this_y 
+            this_fetch = self.meta_t_output 
+        else:
+            feed_dict[self.meta_target_ph] = this_y
+            this_fetch = self.meta_m_output 
+
+        if "x1" in meta_dataset: 
+            feed_dict[self.meta_input_ph] = thix_x1 
+            feed_dict[self.meta_input_2_ph] = this_x2 
+            fetch = self.guess_meta_bf_output
+        else:
+            feed_dict[self.meta_input_ph] = this_x 
+
+        res = self.sess.run(this_fetch, feed_dict=feed_dict)
+
+        if new_dataset is not None:
+            return res[len(meta_dataset["y"]):, :]
+        else:
+            return res
 
 
 model = meta_model(config)

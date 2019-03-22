@@ -177,6 +177,13 @@ class polynomial_family(object):
         return polynomial(self, coefficients)
 
 
+    def sample_point(self, val_range=5):
+        num_relevant_variables = np.random.randint(1, len(self.variables) + 1)
+        relevant_variable_indices = sorted(np.random.permutation(len(self.variables))[:num_relevant_variables])
+        values = [np.random.rand() * 2 * val_range - val_range if i in relevant_variable_indices else 0 for i in range(len(self.variables))]
+        return values
+
+
 class polynomial(object):
     def __init__(self, family, coefficients):
         self.family = family
@@ -212,8 +219,18 @@ class polynomial(object):
     def __pow__(self, power):
         return self.family.pow(self, power) 
 
+
+    def __eq__(self, poly2):
+        return self.family == poly2.family and self.coefficients == poly2.coefficients
+
+
+    def __ne__(self, poly2):
+        return not self.__eq__(poly2)
+
+
     def permute_vars(self, permutation):
         return self.family.permute_vars(self, permutation)
+
 
     def to_symbols(self, strip_spaces=False):
         return self.family.poly_to_symbols(self, strip_spaces=strip_spaces)
