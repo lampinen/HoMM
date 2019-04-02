@@ -658,7 +658,7 @@ class meta_model(object):
         return names, losses
 
 
-    def base_embedding_eval(self, embedding, memory_buffer, return_rewards=True):
+    def base_embedding_eval(self, embedding, memory_buffer):
         input_buff, output_buff = memory_buffer.get_memories()
         feed_dict = {
             self.keep_prob_ph: 1.,
@@ -680,6 +680,16 @@ class meta_model(object):
             self.base_target_ph: output_buff
         }
         res = self.sess.run(self.guess_base_function_emb, feed_dict=feed_dict)
+        return res
+
+
+    def get_combined_embedding(self, t1_embedding, t2_embedding):
+        feed_dict = {
+            self.keep_prob_ph: 1.,
+            self.meta_input_ph: t1_embedding,
+            self.meta_input_2_ph: t2_embedding
+        }
+        res = self.sess.run(self.combined_meta_inputs, feed_dict=feed_dict)
         return res
 
 
@@ -842,4 +852,225 @@ class meta_model(object):
             return res
 
 
-model = meta_model(config)
+    def run_meta_true_eval(self, include_new=False):
+        """Evaluates true meta loss, i.e. the accuracy of the model produced
+           by the embedding output by the meta task"""
+        if include_new:
+            meta_tasks = self.bae_meta_mappings + self.new_meta_mappigns
+            meta_pairings = self.meta_pairings_full
+        else:
+            meta_tasks = self.base_meta_mappings
+            meta_pairings = self.meta_pairings_base
+        meta_binary_funcs = self.base_meta_binary_funcs
+
+        names = []
+        losses = []
+        for meta_task in meta_tasks:
+            meta_dataset = self.meta_dataset_cache[meta_task]
+            for task, other in meta_pairings[meta_task]:
+                task_buffer = self.memory_buffers[task]
+                task_embedding = self.get_base_embedding(task_buffer)
+
+                other_buffer = self.memory_buffers[other]
+
+                mapped_embedding = self.get_meta_outputs(
+                    meta_dataset, {"x": task_embedding})
+
+                names.append(meta_task + ":" + task + "->" + other)
+                this_loss = self.base_embedding_eval(mapped_embedding, other_buffer)
+                losses.append(this_loss)
+        for meta_task in meta_binary_funcs:
+            meta_dataset = self.meta_dataset_cache[meta_task]
+            for task1, task2, other in meta_pairings[meta_task]:
+                task1_buffer = self.memory_buffers[task1]
+                task1_embedding = self.get_base_embedding(task1_buffer)
+                task2_buffer = self.memory_buffers[task2]
+                task2_embedding = self.get_base_embedding(task2_buffer)
+                task_embedding = self.get_combined_embedding(task1_embedding,
+                                                             task2_embedding)
+
+                other_buffer = self.memory_buffers[other]
+
+                mapped_embedding = self.get_meta_outputs(
+                    meta_dataset, {"x": task_embedding})
+
+                names.append(meta_task + ":" + task + "->" + other)
+                this_loss = self.base_embedding_eval(mapped_embedding, other_buffer)
+                losses.append(this_loss)
+
+        return names, rewards
+
+
+    def meta_train_step(self, meta_dataset, meta_lr):
+        y_data = meta_dataset["y"]
+        if "x" in meta_dataset:
+            feed_dict = {
+                self.keep_prob_ph: self.tkp,
+                self.meta_input_ph: meta_dataset["x"],
+                self.guess_input_mask_ph: np.ones([len(meta_dataset["x"])]),
+                self.lr_ph: meta_lr
+            }
+            meta_class = y_data.shape[-1] == 1
+            if meta_class:
+                feed_dict[self.meta_class_ph] = y_data
+                op = self.meta_t_train
+            else:
+                feed_dict[self.meta_target_ph] = y_data
+                op = self.meta_m_train
+        else:
+            feed_dict = {
+                self.keep_prob_ph: self.tkp,
+                self.meta_input_ph: meta_dataset["x1"],
+                self.meta_input_2_ph: meta_dataset["x2"],
+                self.guess_input_mask_ph: np.ones([len(meta_dataset["x1"])]),
+                self.lr_ph: meta_lr
+            }
+            feed_dict[self.meta_target_ph] = y_data
+            op = self.meta_bf_train
+
+        self.sess.run(op, feed_dict=feed_dict)
+
+
+    def save_parameters(self, filename):
+        self.saver.save(self.sess, filename)
+
+
+    def run_training(self, filename_prefix, num_epochs, include_new=False):
+        """Train model on base and meta tasks, if include_new include also
+        the new ones."""
+        config = self.config
+        loss_filename = filename_prefix + "_losses.csv"
+        sweep_filename = filename_prefix + "_sweep_rewards.csv"
+        meta_filename = filename_prefix + "_meta_true_losses.csv"
+        with open(loss_filename, "w") as fout, open(meta_filename, "w") as fout_meta:
+            base_names, base_losses = self.run_base_eval(
+                include_new=include_new)
+            meta_names, meta_losses = self.run_meta_loss_eval(
+                include_new=include_new)
+            meta_true_names, meta_true_losses = self.run_meta_true_eval(
+                include_new=include_new)
+
+            fout.write("epoch, " + ", ".join(base_names + meta_names) + "\n")
+            fout_meta.write("epoch, " + ", ".join(meta_true_names) + "\n")
+
+            loss_format = ", ".join(["%f" for _ in base_names + meta_names]) + "\n"
+            meta_true_format = ", ".join(["%f" for _ in meta_true_names]) + "\n"
+            
+            s_epoch  = "0, "
+            curr_losses = s_epoch + (loss_format % tuple(
+                base_losses + meta_losses))
+            curr_meta_true = s_epoch + (meta_true_format % tuple(
+                meta_true_losses))
+            fout.write(curr_losses)
+            fout_meta.write(curr_meta_true)
+
+            if config["sweep_meta_batch_sizes"] is not None:
+                with open(sweep_filename, "w") as fout_sweep:
+                    sweep_names, sweep_losses = self.run_base_eval(
+                        include_new=include_new, sweep_meta_batch_sizes=config["sweep_meta_batch_sizes"])
+                    fout_sweep.write("epoch, size, " + ", ".join(base_names) + "\n")
+                    for i, swept_batch_size in enumerate(config["sweep_meta_batch_sizes"]):
+                        swept_losses = s_epoch + ("%i, " % swept_batch_size) + (reward_format % tuple(sweep_losses[i]))
+                        fout_sweep.write(swept_rewards)
+
+            if include_new:
+                tasks = self.all_tasks
+                learning_rate = config["new_init_learning_rate"]
+                meta_learning_rate = config["new_init_meta_learning_rate"]
+                language_learning_rate = config["new_init_language_learning_rate"]
+            else:
+                tasks = self.all_initial_tasks
+                learning_rate = config["init_learning_rate"]
+                meta_learning_rate = config["init_meta_learning_rate"]
+                language_learning_rate = config["init_language_learning_rate"]
+
+            save_every = config["save_every"]
+            early_stopping_thresh = config["early_stopping_thresh"]
+            lr_decays_every = config["lr_decays_every"]
+            lr_decay = config["lr_decay"]
+            meta_lr_decay = config["meta_lr_decay"]
+            min_learning_rate = config["min_learning_rate"]
+            min_meta_learning_rate = config["min_meta_learning_rate"]
+            for epoch in range(1, num_epochs+1):
+                if epoch % config["refresh_mem_buffs_every"] == 0:
+                    self.play_games(num_turns=config["memory_buffer_size"],
+                                    include_new=include_new,
+                                    epsilon=config["epsilon"])
+                if epoch % config["refresh_meta_cache_every"] == 0:
+                    self.refresh_meta_dataset_cache(include_new=include_new)
+
+                order = np.random.permutation(len(tasks))
+                for task_i in order:
+                    task = tasks[task_i]
+                    if task in meta_names:
+                        dataset = self.meta_dataset_cache[task]
+                        self.meta_train_step(dataset, meta_learning_rate)
+                    else:
+                        str_task = _stringify_polynomial(task)
+                        memory_buffer = self.memory_buffers[str_task]
+                        self.base_train_step(memory_buffer, learning_rate)
+
+                if epoch % save_every == 0:
+                    s_epoch  = "%i, " % epoch
+                    _, base_losses = self.run_base_eval(
+                        include_new=include_new)
+                    _, meta_losses = self.run_meta_loss_eval(
+                        include_new=include_new)
+                    _, meta_true_losses = self.run_meta_true_eval(
+                        include_new=include_new)
+                    curr_losses = s_epoch + (loss_format % tuple(
+                        base_losses + meta_losses))
+                    curr_meta_true = s_epoch + (meta_true_format % tuple(meta_true_losses))
+                    fout.write(curr_losses)
+                    fout_meta.write(curr_meta_true)
+                    print(curr_losses)
+                    if np.all(curr_losses < early_stopping_thresh):
+                        print("Early stop!")
+                        break
+
+
+                if epoch % lr_decays_every == 0 and epoch > 0:
+                    if learning_rate > min_learning_rate:
+                        learning_rate *= lr_decay
+
+                    if meta_learning_rate > min_meta_learning_rate:
+                        meta_learning_rate *= meta_lr_decay
+
+            if config["sweep_meta_batch_sizes"] is not None:
+                with open(sweep_filename, "a") as fout_sweep:
+                    sweep_names, sweep_losses = self.run_base_eval(
+                        include_new=include_new, sweep_meta_batch_sizes=config["sweep_meta_batch_sizes"])
+                    for i, swept_batch_size in enumerate(config["sweep_meta_batch_sizes"]):
+                        swept_losses = s_epoch + ("%i, " % swept_batch_size) + (reward_format % tuple(sweep_losses[i]))
+                        fout_sweep.write(swept_rewards)
+
+
+## running stuff
+
+for run_i in range(config["run_offset"], config["run_offset"]+config["num_runs"]):
+    np.random.seed(run_i)
+    tf.set_random_seed(run_i)
+    filename_prefix = config["output_dir"] + "run%i" % run_i
+    print("Now running %s" % filename_prefix)
+    _save_config(filename_prefix + "_config.csv", config)
+
+
+    model = meta_model(config)
+#    model.save_embeddings(filename=filename_prefix + "_init_embeddings.csv",
+#                          include_new=False)
+    model.run_training(filename_prefix=filename_prefix,
+                       num_epochs=config["max_base_epochs"],
+                       include_new=False)
+    model.save_parameters(filename_prefix + "_guess_checkpoint")
+#    model.save_embeddings(filename=filename_prefix + "_guess_embeddings.csv",
+#                          include_new=True)
+
+    model.run_training(filename_prefix=filename_prefix + "_new",
+                       num_epochs=config["max_new_epochs"],
+                       include_new=True)
+    model.save_parameters(filename_prefix + "_final_checkpoint")
+
+#    model.save_embeddings(filename=filename_prefix + "_final_embeddings.csv",
+#                          include_new=True)
+
+    tf.reset_default_graph()
