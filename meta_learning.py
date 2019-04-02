@@ -26,7 +26,7 @@ config = {
 
     "num_hidden": 64,
     "num_hidden_hyper": 512,
-    "num_hidden_language": 512,
+#    "num_hidden_language": 512,
 
     "init_learning_rate": 1e-4,
 #    "init_language_learning_rate": 1e-4,
@@ -42,11 +42,11 @@ config = {
 
     "lr_decays_every": 100,
     "min_learning_rate": 3e-8,
-    "min_language_learning_rate": 1e-8,
+#    "min_language_learning_rate": 1e-8,
     "min_meta_learning_rate": 3e-7,
 
     "refresh_meta_cache_every": 1, # how many epochs between updates to meta_cache
-#    "refresh_mem_buffs_every": 50, # how many epochs between updates to buffers
+    "refresh_mem_buffs_every": 50, # how many epochs between updates to buffers
 
     "max_base_epochs": 10000,
     "max_new_epochs": 1000,
@@ -80,7 +80,7 @@ config = {
                                   # polynomials, how many pairs does the 
                                   # system see?
     "new_meta_tasks": [],
-    "new_meta_mappings": ["permute_3210", "add_2", "add_-2", "mult_2", "mult_-2"],
+    "new_meta_mappings": ["permute_3210", "add_%f" % 2., "add_%f" % -2., "mult_%f" % 2., "mult_%f" % -2.],
     
 #    "train_language": False, # whether to train language as well (only language
 #                            # inputs, for now)
@@ -615,7 +615,7 @@ class meta_model(object):
         self.sess.run(self.base_train, feed_dict=feed_dict)
 
 
-    def base_eval(self, memory_buffer, return_rewards=True, meta_batch_size=None):
+    def base_eval(self, memory_buffer, meta_batch_size=None):
         input_buff, output_buff = memory_buffer.get_memories()
         feed_dict = {
             self.base_input_ph: input_buff,
@@ -734,7 +734,6 @@ class meta_model(object):
     def meta_loss_eval(self, meta_dataset):
         feed_dict = {
             self.keep_prob_ph: 1.,
-            self.guess_input_mask_ph: np.ones([len(meta_dataset["x"])])
         }
         y_data = meta_dataset["y"]
         if y_data.shape[-1] == 1:
@@ -747,9 +746,11 @@ class meta_model(object):
         if "x1" in meta_dataset: 
             feed_dict[self.meta_input_ph] = meta_dataset["x1"]
             feed_dict[self.meta_input_2_ph] = meta_dataset["x2"]
+            feed_dict[self.guess_input_mask_ph] =  np.ones([len(meta_dataset["x1"])])
             fetch = self.total_meta_bf_loss
         else:
             feed_dict[self.meta_input_ph] = meta_dataset["x"]
+            feed_dict[self.guess_input_mask_ph] =  np.ones([len(meta_dataset["x"])])
 
         return self.sess.run(fetch, feed_dict=feed_dict)
         
@@ -838,9 +839,9 @@ class meta_model(object):
             this_fetch = self.meta_m_output 
 
         if "x1" in meta_dataset: 
-            feed_dict[self.meta_input_ph] = thix_x1 
+            feed_dict[self.meta_input_ph] = this_x1 
             feed_dict[self.meta_input_2_ph] = this_x2 
-            fetch = self.guess_meta_bf_output
+            fetch = self.meta_bf_output
         else:
             feed_dict[self.meta_input_ph] = this_x 
 
@@ -856,7 +857,7 @@ class meta_model(object):
         """Evaluates true meta loss, i.e. the accuracy of the model produced
            by the embedding output by the meta task"""
         if include_new:
-            meta_tasks = self.bae_meta_mappings + self.new_meta_mappigns
+            meta_tasks = self.base_meta_mappings + self.new_meta_mappings
             meta_pairings = self.meta_pairings_full
         else:
             meta_tasks = self.base_meta_mappings
@@ -867,6 +868,9 @@ class meta_model(object):
         losses = []
         for meta_task in meta_tasks:
             meta_dataset = self.meta_dataset_cache[meta_task]
+            if meta_dataset == {}: # new tasks aren't cached
+                meta_dataset = self.get_meta_dataset(meta_task, include_new) 
+
             for task, other in meta_pairings[meta_task]:
                 task_buffer = self.memory_buffers[task]
                 task_embedding = self.get_base_embedding(task_buffer)
@@ -877,7 +881,7 @@ class meta_model(object):
                     meta_dataset, {"x": task_embedding})
 
                 names.append(meta_task + ":" + task + "->" + other)
-                this_loss = self.base_embedding_eval(mapped_embedding, other_buffer)
+                this_loss = self.base_embedding_eval(mapped_embedding, other_buffer)[0]
                 losses.append(this_loss)
         for meta_task in meta_binary_funcs:
             meta_dataset = self.meta_dataset_cache[meta_task]
@@ -886,19 +890,18 @@ class meta_model(object):
                 task1_embedding = self.get_base_embedding(task1_buffer)
                 task2_buffer = self.memory_buffers[task2]
                 task2_embedding = self.get_base_embedding(task2_buffer)
-                task_embedding = self.get_combined_embedding(task1_embedding,
-                                                             task2_embedding)
 
                 other_buffer = self.memory_buffers[other]
 
                 mapped_embedding = self.get_meta_outputs(
-                    meta_dataset, {"x": task_embedding})
+                    meta_dataset, {"x1": task1_embedding,
+                                   "x2": task2_embedding})
 
                 names.append(meta_task + ":" + task + "->" + other)
-                this_loss = self.base_embedding_eval(mapped_embedding, other_buffer)
+                this_loss = self.base_embedding_eval(mapped_embedding, other_buffer)[0]
                 losses.append(this_loss)
 
-        return names, rewards
+        return names, losses 
 
 
     def meta_train_step(self, meta_dataset, meta_lr):
@@ -940,7 +943,7 @@ class meta_model(object):
         the new ones."""
         config = self.config
         loss_filename = filename_prefix + "_losses.csv"
-        sweep_filename = filename_prefix + "_sweep_rewards.csv"
+        sweep_filename = filename_prefix + "_sweep_losses.csv"
         meta_filename = filename_prefix + "_meta_true_losses.csv"
         with open(loss_filename, "w") as fout, open(meta_filename, "w") as fout_meta:
             base_names, base_losses = self.run_base_eval(
@@ -953,6 +956,7 @@ class meta_model(object):
             fout.write("epoch, " + ", ".join(base_names + meta_names) + "\n")
             fout_meta.write("epoch, " + ", ".join(meta_true_names) + "\n")
 
+            base_loss_format = ", ".join(["%f" for _ in base_names]) + "\n"
             loss_format = ", ".join(["%f" for _ in base_names + meta_names]) + "\n"
             meta_true_format = ", ".join(["%f" for _ in meta_true_names]) + "\n"
             
@@ -970,19 +974,17 @@ class meta_model(object):
                         include_new=include_new, sweep_meta_batch_sizes=config["sweep_meta_batch_sizes"])
                     fout_sweep.write("epoch, size, " + ", ".join(base_names) + "\n")
                     for i, swept_batch_size in enumerate(config["sweep_meta_batch_sizes"]):
-                        swept_losses = s_epoch + ("%i, " % swept_batch_size) + (reward_format % tuple(sweep_losses[i]))
-                        fout_sweep.write(swept_rewards)
+                        swept_losses = s_epoch + ("%i, " % swept_batch_size) + (base_loss_format % tuple(sweep_losses[i]))
+                        fout_sweep.write(swept_losses)
 
             if include_new:
                 tasks = self.all_tasks
                 learning_rate = config["new_init_learning_rate"]
                 meta_learning_rate = config["new_init_meta_learning_rate"]
-                language_learning_rate = config["new_init_language_learning_rate"]
             else:
                 tasks = self.all_initial_tasks
                 learning_rate = config["init_learning_rate"]
                 meta_learning_rate = config["init_meta_learning_rate"]
-                language_learning_rate = config["init_language_learning_rate"]
 
             save_every = config["save_every"]
             early_stopping_thresh = config["early_stopping_thresh"]
@@ -993,16 +995,15 @@ class meta_model(object):
             min_meta_learning_rate = config["min_meta_learning_rate"]
             for epoch in range(1, num_epochs+1):
                 if epoch % config["refresh_mem_buffs_every"] == 0:
-                    self.play_games(num_turns=config["memory_buffer_size"],
-                                    include_new=include_new,
-                                    epsilon=config["epsilon"])
+                    self.fill_buffers(num_data_points=config["memory_buffer_size"],
+                                      include_new=True)
                 if epoch % config["refresh_meta_cache_every"] == 0:
                     self.refresh_meta_dataset_cache(include_new=include_new)
 
                 order = np.random.permutation(len(tasks))
                 for task_i in order:
                     task = tasks[task_i]
-                    if task in meta_names:
+                    if isinstance(task, str):
                         dataset = self.meta_dataset_cache[task]
                         self.meta_train_step(dataset, meta_learning_rate)
                     else:
@@ -1041,8 +1042,8 @@ class meta_model(object):
                     sweep_names, sweep_losses = self.run_base_eval(
                         include_new=include_new, sweep_meta_batch_sizes=config["sweep_meta_batch_sizes"])
                     for i, swept_batch_size in enumerate(config["sweep_meta_batch_sizes"]):
-                        swept_losses = s_epoch + ("%i, " % swept_batch_size) + (reward_format % tuple(sweep_losses[i]))
-                        fout_sweep.write(swept_rewards)
+                        swept_losses = s_epoch + ("%i, " % swept_batch_size) + (base_loss_format % tuple(sweep_losses[i]))
+                        fout_sweep.write(swept_losses)
 
 
 ## running stuff

@@ -221,7 +221,7 @@ class polynomial(object):
 
 
     def __eq__(self, poly2):
-        return self.family == poly2.family and self.coefficients == poly2.coefficients
+        return isinstance(poly2, polynomial) and self.family == poly2.family and self.coefficients == poly2.coefficients
 
 
     def __ne__(self, poly2):
