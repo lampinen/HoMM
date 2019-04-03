@@ -483,7 +483,7 @@ class meta_model(object):
                 hidden_weights.append(Wi)
                 hidden_biases.append(bi)
                 for i in range(1, num_task_hidden_layers):
-                    Wi = tf.transpose(task_weights[:, :, input_size+(i-1)*num_hidden:input_size+i*num_hidden], perm=[0, 2, 1])
+                    Wi = tf.transpose(task_weights[:, :, num_hidden_hyper+(i-1)*num_hidden:num_hidden_hyper+i*num_hidden], perm=[0, 2, 1])
                     bi = task_biases[:, num_hidden*i:num_hidden*(i+1)]
                     hidden_weights.append(Wi)
                     hidden_biases.append(bi)
