@@ -48,8 +48,8 @@ config = {
     "refresh_meta_cache_every": 1, # how many epochs between updates to meta_cache
     "refresh_mem_buffs_every": 50, # how many epochs between updates to buffers
 
-    "max_base_epochs": 10000,
-    "max_new_epochs": 1000,
+    "max_base_epochs": 4000,
+    "max_new_epochs": 500,
     "num_task_hidden_layers": 3,
     "num_hyper_hidden_layers": 3,
     "train_drop_prob": 0.00, # dropout probability, applied on meta and hyper
@@ -73,6 +73,7 @@ config = {
     "num_base_tasks": 100, # prior to meta-augmentation
     "num_new_tasks": 10,
     "poly_coeff_sd": 2.5,
+    "point_val_range": 1,
 
     "meta_add_vals": [-3, -2, -1, 1, 3],
     "meta_mult_vals": [-3, -1, 3],
@@ -588,7 +589,7 @@ class meta_model(object):
             x_data = np.zeros([num_data_points, self.config["num_input"]])
             y_data = np.zeros([num_data_points, self.config["num_output"]])
             for point_i in range(num_data_points):
-                point = t.family.sample_point()
+                point = t.family.sample_point(val_range=self.config["point_val_range"])
                 x_data[point_i, :] = point
                 y_data[point_i, :] = t.evaluate(point)
             buff.insert(x_data, y_data)
