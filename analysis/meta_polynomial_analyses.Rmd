@@ -11,7 +11,7 @@ library(tidyverse)
 num_runs = 2
 results_dir = "../results/"
 
-result_subdirs = c("basic", "basic_h128_longer")
+result_subdirs = c("basic", "basic_h128_slower")
                    
 
 name_run_type = function(run_type) { # names for plotting
@@ -23,7 +23,7 @@ name_run_type = function(run_type) { # names for plotting
 # utils and setup
 ```{r}
 read_config = function(config_file) { 
-  config = read_delim("../results/basic/run0_config.csv", delim="\n") %>%
+  config = read_delim(config_file, delim="\n") %>%
     separate(`key, value`, c("key", "value"), sep=",", extra="merge") %>%
     spread(key, value) %>%
     mutate_at(c("base_task_names", "new_task_names", "base_meta_tasks", "base_meta_binary_funcs", "base_meta_mappings", "new_meta_mappings"), function(x) {
@@ -43,8 +43,8 @@ load_d = function(results_dir, result_subdirs, num_runs, file_type) {
         next
       }
       if (file_type == "config") {
-        this_d = read_config(config_filename)
-      } else{
+        this_d = read_config(filename)
+      } else {
         this_d = read.csv(filename, check.names=F, header=T) 
         this_d = this_d[, !duplicated(colnames(this_d))] # drop functions which are equivalent within rounding 
       }
