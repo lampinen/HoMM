@@ -1,0 +1,158 @@
+---
+title: "Meta polynomial analyses"
+output: html_notebook
+---
+
+```{r}
+library(tidyverse)
+```
+
+```{r}
+num_runs = 2
+results_dir = "../results/"
+
+result_subdirs = c("basic", "basic_h128_longer")
+                   
+
+name_run_type = function(run_type) { # names for plotting
+  case_when(run_type == "basic" ~ "Basic",
+            T ~ run_type)
+}
+```
+
+# utils and setup
+```{r}
+read_config = function(config_file) { 
+  config = read_delim("../results/basic/run0_config.csv", delim="\n") %>%
+    separate(`key, value`, c("key", "value"), sep=",", extra="merge") %>%
+    spread(key, value) %>%
+    mutate_at(c("base_task_names", "new_task_names", "base_meta_tasks", "base_meta_binary_funcs", "base_meta_mappings", "new_meta_mappings"), function(x) {
+      x = gsub("\\\"|[][]| ", "", x)
+      return(str_split(x, ","))
+    } )
+}
+```
+
+```{r}
+load_d = function(results_dir, result_subdirs, num_runs, file_type) {
+  d = data.frame()
+  for (run_i in 0:(num_runs-1)) {
+    for (result_subdir in result_subdirs) {
+      filename = sprintf("%s%s/run%i_%s.csv", results_dir, result_subdir, run_i, file_type)
+      if (!file.exists(filename)) {
+        next
+      }
+      if (file_type == "config") {
+        this_d = read_config(config_filename)
+      } else{
+        this_d = read.csv(filename, check.names=F, header=T) 
+        this_d = this_d[, !duplicated(colnames(this_d))] # drop functions which are equivalent within rounding 
+      }
+      this_d = this_d %>%
+        mutate(run = run_i,
+               run_type = result_subdir)
+      d = d %>%
+        bind_rows(this_d)
+    }
+    
+  }
+  d = d %>%
+    mutate(named_run_type = name_run_type(run_type))
+  return(d)
+}
+```
+
+plot themes
+```{r}
+theme_set(theme_bw() + 
+            theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()))
+```
+
+```{r}
+name_var = function(var) { # var names for plotting
+  case_when(var %in% c("is_new", "is_new_polynomial") ~ "Held out?",
+            var %in% c("run_type", "named_run_type") ~ "Run type",
+            T ~ var)
+  }
+
+summary_plot = function(data,  x_var, y_var, color_var, optimal_baseline_data=NULL, other_baseline_data=NULL, palette="Set2") {
+  if(x_var == color_var) {
+    pos_func=NULL
+  } else {
+    pos_func = position_dodge(width=0.5)
+  }
+  p = ggplot(data, aes_string(x=x_var, y=y_var, color=color_var)) +
+    geom_point(stat="summary", fun.y=mean, size=2,
+               position=pos_func) +
+    geom_errorbar(stat="summary", 
+                  fun.ymin=function(x) {mean(x) - 1.96*sd(x)/sqrt(length(x))},
+                  fun.ymax=function(x) {mean(x) + 1.96*sd(x)/sqrt(length(x))},
+                  width=0.25,
+                  position=pos_func) +
+    scale_color_brewer(palette=palette) +
+    labs(x=name_var(x_var), y=name_var(y_var)) +
+    guides(color=guide_legend(title=NULL))
+    
+  if (!is.null(optimal_baseline_data)) {
+    # TODO (maybe)
+  }
+  
+  if (!is.null(other_baseline_data)) {
+    # TODO (maybe)
+  }
+  
+  return(p)
+}
+```
+
+```{r}
+config_d = load_d(results_dir, result_subdirs, num_runs, "config")
+```
+
+```{r}
+check_if_new_task = function(run_num, run_type, task_name) {
+  new_task_names = config_d %>%
+    filter(run == run_num, run_type == run_type) %>%
+    pull(new_task_names) %>%
+    unlist()
+  return(task_name %in% new_task_names)
+}
+```
+
+# meta-learning tests
+
+```{r}
+original_base_d = load_d(results_dir, result_subdirs, num_runs, "losses") %>% 
+  filter(epoch == 0) %>%
+  select(epoch, run, named_run_type, run_type,
+         matches("\\d\\.\\d\\d")) %>% # all base tasks have at least one coefficient
+  gather(polynomial, loss, -epoch, -contains("run")) %>%
+  mutate(is_new=F, learned="Before training")
+```
+
+```{r}
+base_d = load_d(results_dir, result_subdirs, num_runs, "new_losses") %>% 
+  filter(epoch == 0) %>%
+  select(epoch, run, named_run_type, run_type,
+         matches("\\d\\.\\d\\d")) %>% # all base tasks have at least one coefficient
+  gather(polynomial, loss, -epoch, -contains("run"))
+```
+
+```{r}
+base_d = base_d %>%
+  rowwise() %>%
+  mutate(is_new = check_if_new_task(run, run_type, polynomial)) %>%
+  ungroup() %>%
+  mutate(learned="After training")
+```
+
+```{r}
+base_d = bind_rows(original_base_d, base_d)
+```
+
+```{r}
+summary_plot(base_d,
+             "learned", "loss", "is_new") +
+  facet_wrap(. ~ named_run_type) 
+  
+```
