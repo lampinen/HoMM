@@ -119,6 +119,8 @@ check_if_new_task = function(run_num, run_type, task_name) {
 }
 ```
 
+N.B. that because the new and old tasks are sampled independently, there are occasionally collisions, especially with constant polynomials (not that many options, really). It seems to be rare enough to not materially affect the conclusions, however.
+
 # meta-learning tests
 
 ```{r}
@@ -156,3 +158,52 @@ summary_plot(base_d,
   facet_wrap(. ~ named_run_type) 
   
 ```
+
+
+# meta learning
+
+```{r}
+original_meta_d = load_d(results_dir, result_subdirs, num_runs, "meta_true_losses") %>% 
+  filter(epoch == 0) 
+```
+
+```{r}
+meta_d = load_d(results_dir, result_subdirs, num_runs, "new_meta_true_losses") %>% 
+  filter(epoch == 0) 
+```
+
+```{r}
+process_meta_d = function(meta_d) {
+  meta_d = meta_d %>%
+    gather(meta_task, loss, -epoch, -contains("run"), na.rm=T) %>% 
+    separate(meta_task, c("meta_task", "source", "target"), sep=":|->") %>%
+    rowwise() %>%
+    mutate(source_is_new = check_if_new_task(run, run_type, source),
+           target_is_new = check_if_new_task(run, run_type, target)) %>%
+    ungroup() %>%
+    mutate(is_new = source_is_new | target_is_new)
+  return(meta_d)
+}
+```
+
+```{r}
+meta_d = process_meta_d(meta_d) %>%
+  mutate(learned="After training")
+```
+
+```{r}
+original_meta_d = process_meta_d(original_meta_d) %>%
+  mutate(learned="Before training")
+```
+
+```{r}
+meta_d = bind_rows(original_meta_d, meta_d)
+```
+
+```{r}
+summary_plot(meta_d,
+             "learned", "loss", "is_new") +
+  facet_wrap(. ~ named_run_type) +
+  ylim(0, NA)
+```
+
