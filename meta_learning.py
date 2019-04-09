@@ -106,6 +106,8 @@ config["meta_mappings"] = [x for x in config["base_meta_mappings"] if x not in c
 
 config["base_tasks"] = [poly_fam.sample_polynomial(coefficient_sd=config["poly_coeff_sd"]) for _ in range(config["num_base_tasks"])]
 config["new_tasks"] = [poly_fam.sample_polynomial(coefficient_sd=config["poly_coeff_sd"]) for _ in range(config["num_new_tasks"])]
+conifg["base_task_names"] = [x.to_symbols() for x in config["base_tasks"]] 
+conifg["new_task_names"] = [x.to_symbols() for x in config["new_tasks"]] 
                         
 # tasks implied by meta mappings, network will also be trained on these  
 config["implied_base_tasks"] = [] 
