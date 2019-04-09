@@ -1,10 +1,11 @@
 import numpy as np
-from itertools import combinations, chain
+from itertools import combinations_with_replacement, chain
 
-def powerset(iterable):
-    "powerset([1,2,3]) --> () (1,) (2,) (3,) (1,2) (1,3) (2,3) (1,2,3)"
+def weird_powerset(iterable, max_size=None):
     s = list(iterable)
-    return chain.from_iterable(combinations(s, r) for r in range(len(s)+1))
+    if max_size is None:
+        max_size = len(s)
+    return chain.from_iterable(combinations_with_replacement(s, r) for r in range(max_size+1))
 
 class polynomial_family(object):
     def __init__(self, num_variables, max_degree=2):
@@ -164,7 +165,7 @@ class polynomial_family(object):
                 coefficients["1"] = constant_coefficient
 
             relevant_variables = [self.variables[i] for i in sorted(np.random.permutation(len(self.variables))[:num_relevant_variables])]
-            possible_terms = powerset(relevant_variables)
+            possible_terms = weird_powerset(relevant_variables)
             next(possible_terms) # get rid of the empty set
             for term in possible_terms:
                 if len(term) > self.max_degree:
@@ -310,3 +311,8 @@ if __name__ == "__main__":
     print((yplus2 ** 1).to_symbols())
     print((yplus2 ** 2).to_symbols())
     print((yplus2 ** 3).to_symbols())
+
+    print("random samples")
+    np.random.seed(0)
+    for _ in range(5):
+        print(p_fam.sample_polynomial().to_symbols())
