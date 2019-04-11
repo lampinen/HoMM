@@ -6,8 +6,10 @@ import numpy as np
 import tensorflow as tf
 import tensorflow.contrib.slim as slim
 import os
+import re
 from copy import deepcopy
 from itertools import permutations
+from collections import Counter
 
 from polynomials import *
 from orthogonal_matrices import random_orthogonal
@@ -26,29 +28,32 @@ config = {
 
     "num_hidden": 64,
     "num_hidden_hyper": 512,
-#    "num_hidden_language": 512,
+    "num_hidden_language": 512,
+
+    "num_lstm_layers": 2, # for language processing
+    "max_sentence_len": 20, # Any longer than this will not be trained
 
     "init_learning_rate": 1e-4,
-#    "init_language_learning_rate": 1e-4,
+    "init_language_learning_rate": 1e-4,
     "init_meta_learning_rate": 1e-4,
 
     "new_init_learning_rate": 1e-5,
-#    "new_init_language_learning_rate": 1e-5,
+    "new_init_language_learning_rate": 1e-5,
     "new_init_meta_learning_rate": 1e-5,
 
     "lr_decay": 0.85,
-#    "language_lr_decay": 0.8,
+    "language_lr_decay": 0.8,
     "meta_lr_decay": 0.9,
 
     "lr_decays_every": 100,
     "min_learning_rate": 3e-8,
-#    "min_language_learning_rate": 1e-8,
+    "min_language_learning_rate": 3e-8,
     "min_meta_learning_rate": 3e-7,
 
     "refresh_meta_cache_every": 1, # how many epochs between updates to meta_cache
     "refresh_mem_buffs_every": 50, # how many epochs between updates to buffers
 
-    "max_base_epochs": 4000,
+    "max_base_epochs": 3000,
     "max_new_epochs": 500,
     "num_task_hidden_layers": 3,
     "num_hyper_hidden_layers": 3,
@@ -61,7 +66,7 @@ config = {
                                    # hyper weights that generate the task
                                    # parameters. 
 
-    "output_dir": "/mnt/fs2/lampinen/polynomials/basic/",
+    "output_dir": "/mnt/fs2/lampinen/polynomials/language/",
     "save_every": 20, 
     "sweep_meta_batch_sizes": [10, 20, 30, 50, 100, 200, 400, 800], # if not None,
                                                                     # eval each at
@@ -83,10 +88,10 @@ config = {
     "new_meta_tasks": [],
     "new_meta_mappings": ["permute_3210", "add_%f" % 2., "add_%f" % -2., "mult_%f" % 2., "mult_%f" % -2.],
     
-#    "train_language": False, # whether to train language as well (only language
-#                            # inputs, for now)
-#    "lang_drop_prob": 0.0, # dropout on language processing features
-#                            # to try to address overfitting
+    "train_language": False, # whether to train language as well (only language
+                            # inputs, for now)
+    "lang_drop_prob": 0.0, # dropout on language processing features
+                            # to try to address overfitting
 
     "internal_nonlinearity": tf.nn.leaky_relu,
     "output_nonlinearity": None
@@ -104,6 +109,7 @@ config["base_meta_binary_funcs"] = ["binary_sum", "binary_mult"]
 config["base_meta_tasks"] = [x for x in config["base_meta_tasks"] if x not in config["new_meta_tasks"]]
 config["meta_mappings"] = [x for x in config["base_meta_mappings"] if x not in config["new_meta_mappings"]]
 
+np.random.seed(0)
 config["base_tasks"] = [poly_fam.sample_polynomial(coefficient_sd=config["poly_coeff_sd"]) for _ in range(config["num_base_tasks"])]
 config["new_tasks"] = [poly_fam.sample_polynomial(coefficient_sd=config["poly_coeff_sd"]) for _ in range(config["num_new_tasks"])]
 config["base_task_names"] = [x.to_symbols() for x in config["base_tasks"]] 
@@ -115,14 +121,36 @@ config["implied_new_tasks"] = []
 
 
 # language
+vocab = ['PAD'] + [str(x) for x in range(10)] + [".", "+", "-", "^"] + poly_fam.variables
+vocab_to_int = dict(zip(vocab, range(len(vocab))))
 
-vocab = [str(x) for x in range(10)] + [".", "+", "-", "^"] + poly_fam.variables
+config["vocab"] = vocab
 
 ### END PARAMATERS (finally) ##################################
 
 def _stringify_polynomial(p):
     """Helper for printing, etc."""
     return p.to_symbols(strip_spaces=True)
+
+
+number_regex = re.compile('-?[0-9]\.[0-9][0-9]')
+def _intify_polynomial(p):
+    """Helper for language inputs"""
+    symbs = p.to_symbols(strip_spaces=False)
+    symbs = re.sub("\+ -", "-", symbs)
+    symbs = symbs.split()
+    symbs_fixed = []
+    for x in symbs:
+        if number_regex.match(x):
+            symbs_fixed += list(x)
+        else:
+            symbs_fixed.append(x)
+    return symbs_fixed
+
+
+def _pad(l, length, pad_token="PAD"):
+    return [pad_token]*(length - len(l)) + l
+
 
 def _save_config(filename, config):
     with open(filename, "w") as fout:
@@ -268,6 +296,8 @@ class meta_model(object):
         self.num_input = config["num_input"]
         self.num_output = config["num_output"]
         self.tkp = 1. - config["train_drop_prob"] # drop prob -> keep prob
+        self.vocab = config["vocab"]
+        self.vocab_size = len(self.vocab)
 
         base_tasks = config["base_tasks"]
         base_meta_tasks = config["base_meta_tasks"]
@@ -281,10 +311,12 @@ class meta_model(object):
         # base datasets / memory_buffers
         self.base_tasks = base_tasks
         self.base_task_names = [_stringify_polynomial(t) for t in base_tasks]
+        self.intified_base_tasks =  [_intify_polynomial(t) for t in base_tasks]
 
         # new datasets / memory_buffers
         self.new_tasks = new_tasks
         self.new_task_names = [_stringify_polynomial(t) for t in new_tasks]
+        self.intified_new_tasks =  [_intify_polynomial(t) for t in new_tasks]
 
         self.all_base_tasks = self.base_tasks + self.new_tasks
 
@@ -304,6 +336,15 @@ class meta_model(object):
         self.all_new_tasks = self.new_tasks + self.all_new_meta_tasks
 
         # think that's enough redundant variables?
+        max_sentence_len_obs = max(max([len(x) for x in self.intified_new_tasks]), max([len(x) for x in self.intified_base_tasks]))
+        self.max_sentence_len = min(config["max_sentence_len"], max_sentence_len_obs)
+#        print(self.max_sentence_len)
+        self.intified_base_tasks = [_pad(x, self.max_sentence_len, 0) if len(x) <= self.max_sentence_len else None for x in self.intified_base_tasks]
+        self.intified_new_tasks = [_pad(x, self.max_sentence_len, 0) if len(x) <= self.max_sentence_len else None for x in self.intified_new_tasks]
+#        print(self.intified_base_tasks)
+#        print(self.intified_new_tasks)
+        self.task_to_ints = {str_t: int_t for str_t, int_t in zip(self.base_task_names + self.new_task_names, self.intified_base_tasks + self.intified_new_tasks)}
+
         self.meta_pairings_base, self.base_tasks_implied = _get_meta_pairings(
             self.base_tasks, self.base_meta_tasks, self.base_meta_mappings,
             self.base_meta_binary_funcs)
@@ -455,6 +496,53 @@ class meta_model(object):
 #        print(self.guess_base_function_emb)
 #        print(self.guess_meta_bf_function_emb)
 
+        # language processing: lang -> emb
+        num_hidden_language = config["num_hidden_language"]
+        num_lstm_layers = config["num_lstm_layers"]
+
+        self.lang_keep_ph = lang_keep_ph = tf.placeholder(tf.float32)
+        self.lang_keep_prob = 1. - config["lang_drop_prob"]
+        self.language_input_ph = tf.placeholder(
+            tf.int32, shape=[1, self.max_sentence_len])
+        with tf.variable_scope("word_embeddings", reuse=False):
+            self.word_embeddings = tf.get_variable(
+                "embeddings", shape=[self.vocab_size, num_hidden_language])
+        self.embedded_language = tf.nn.embedding_lookup(self.word_embeddings,
+                                                        self.language_input_ph)
+
+        def _language_network(embedded_language, reuse=True):
+            """Maps from language to a function embedding"""
+            with tf.variable_scope("language_processing"):
+                cells = [tf.nn.rnn_cell.LSTMCell(
+                    num_hidden_language) for _ in range(num_lstm_layers)]
+                stacked_cell = tf.nn.rnn_cell.MultiRNNCell(cells)
+
+                state = stacked_cell.zero_state(1, dtype=tf.float32)
+
+                for i in range(self.max_sentence_len):
+                    this_input = embedded_language[:, i, :]
+                    this_input = tf.nn.dropout(this_input,
+                                               lang_keep_ph)
+                    cell_output, state = stacked_cell(this_input, state)
+
+                cell_output = tf.nn.dropout(cell_output,
+                                           lang_keep_ph)
+                language_hidden = slim.fully_connected(
+                    cell_output, num_hidden_language,
+                    activation_fn=internal_nonlinearity)
+
+                language_hidden = tf.nn.dropout(language_hidden,
+                                           lang_keep_ph)
+
+                func_embeddings = slim.fully_connected(language_hidden,
+                                                       num_hidden_hyper,
+                                                       activation_fn=None)
+            return func_embeddings
+
+        self.language_function_emb = _language_network(self.embedded_language,
+                                                       False)
+
+
         # hyper_network: emb -> (f: emb -> emb)
         self.feed_embedding_ph = tf.placeholder(np.float32,
                                                 [1, num_hidden_hyper])
@@ -510,6 +598,7 @@ class meta_model(object):
 
         self.base_task_params = _hyper_network(self.guess_base_function_emb,
                                                reuse=False)
+        self.base_lang_task_params = _hyper_network(self.language_function_emb)
         self.meta_t_task_params = _hyper_network(self.guess_meta_t_function_emb)
         self.meta_m_task_params = _hyper_network(self.guess_meta_m_function_emb)
         self.meta_bf_task_params = _hyper_network(self.guess_meta_bf_function_emb)
@@ -531,6 +620,10 @@ class meta_model(object):
                                              processed_input)
         self.base_output = _output_mapping(self.base_raw_output)
 
+        self.base_lang_raw_output = _task_network(self.base_lang_task_params,
+                                             processed_input)
+        self.base_lang_output = _output_mapping(self.base_lang_raw_output)
+
         self.base_raw_output_fed_emb = _task_network(self.fed_emb_task_params,
                                                      processed_input)
         self.base_output_fed_emb = _output_mapping(self.base_raw_output_fed_emb)
@@ -547,6 +640,9 @@ class meta_model(object):
 
         self.base_loss = tf.square(self.base_output - self.base_target_ph)
         self.total_base_loss = tf.reduce_mean(self.base_loss)
+
+        self.base_lang_loss = tf.square(self.base_lang_output - self.base_target_ph)
+        self.total_base_lang_loss = tf.reduce_mean(self.base_lang_loss)
 
         self.base_fed_emb_loss = tf.square(
             self.base_output_fed_emb - self.base_target_ph)
@@ -567,6 +663,7 @@ class meta_model(object):
         optimizer = tf.train.RMSPropOptimizer(self.lr_ph)
 
         self.base_train = optimizer.minimize(self.total_base_loss)
+        self.base_lang_train = optimizer.minimize(self.total_base_lang_loss)
         self.meta_t_train = optimizer.minimize(self.total_meta_t_loss)
         self.meta_m_train = optimizer.minimize(self.total_meta_m_loss)
         self.meta_bf_train = optimizer.minimize(self.total_meta_bf_loss)
@@ -623,6 +720,20 @@ class meta_model(object):
         self.sess.run(self.base_train, feed_dict=feed_dict)
 
 
+    def base_language_train_step(self, intified_task, memory_buffer, lr):
+        input_buff, output_buff = memory_buffer.get_memories()
+        targets, target_mask = self._outcomes_to_targets(output_buff)
+        feed_dict = {
+            self.base_input_ph: input_buff,
+            self.language_input_ph: intified_task,
+            self.lang_keep_ph: self.lang_keep_prob,
+            self.base_target_ph: targets,
+            self.keep_prob_ph: self.tkp,
+            self.lr_ph: lr
+        }
+        self.sess.run(self.base_lang_train, feed_dict=feed_dict)
+
+
     def base_eval(self, memory_buffer, meta_batch_size=None):
         input_buff, output_buff = memory_buffer.get_memories()
         feed_dict = {
@@ -664,6 +775,40 @@ class meta_model(object):
 
         names = [_stringify_polynomial(t) for t in tasks]
         return names, losses
+        
+
+    def base_language_eval(self, intified_task, memory_buffer):
+        input_buff, output_buff = memory_buffer.get_memories()
+        feed_dict = {
+            self.base_input_ph: input_buff,
+            self.language_input_ph: intified_task,
+            self.base_target_ph: output_buff,
+            self.lang_keep_ph: 1.,
+            self.keep_prob_ph: 1.
+        }
+        fetches = [self.total_base_lang_loss]
+        res = self.sess.run(fetches, feed_dict=feed_dict)
+        return res
+
+
+    def run_base_language_eval(self, include_new=False):
+        if include_new:
+            tasks = self.all_base_tasks
+        else:
+            tasks = self.base_tasks
+
+        losses = [] 
+        for task in tasks:
+            task_str = _stringify_polynomial(task)
+            intified_task = self.task_to_ints[task_str]
+            if intified_task is None:
+                continue
+            memory_buffer = self.memory_buffers[task_str]
+            res = self.base_lang_eval(intified_task, memory_buffer)
+            losses.append(res[0])
+
+        names = [_stringify_polynomial(t) for t in tasks]
+        return names, losses
 
 
     def base_embedding_eval(self, embedding, memory_buffer):
@@ -688,6 +833,16 @@ class meta_model(object):
             self.base_target_ph: output_buff
         }
         res = self.sess.run(self.guess_base_function_emb, feed_dict=feed_dict)
+        return res
+
+
+    def get_language_embedding(self, intified_task):
+        feed_dict = {
+            self.keep_prob_ph: 1.,
+            self.lang_keep_ph: 1.,
+            self.language_input_ph: intified_task
+        }
+        res = self.sess.run(self.language_function_emb, feed_dict=feed_dict)
         return res
 
 
@@ -913,6 +1068,8 @@ class meta_model(object):
 
 
     def meta_train_step(self, meta_dataset, meta_lr):
+        if "y" not in meta_dataset:
+            print(meta_dataset)
         y_data = meta_dataset["y"]
         if "x" in meta_dataset:
             feed_dict = {
@@ -953,7 +1110,10 @@ class meta_model(object):
         loss_filename = filename_prefix + "_losses.csv"
         sweep_filename = filename_prefix + "_sweep_losses.csv"
         meta_filename = filename_prefix + "_meta_true_losses.csv"
-        with open(loss_filename, "w") as fout, open(meta_filename, "w") as fout_meta:
+        lang_filename = filename_prefix + "_language_losses.csv"
+        train_language = config["train_language"]
+
+        with open(loss_filename, "w") as fout, open(meta_filename, "w") as fout_meta, open(lang_filename, "w") as fout_lang:
             base_names, base_losses = self.run_base_eval(
                 include_new=include_new)
             meta_names, meta_losses = self.run_meta_loss_eval(
@@ -967,7 +1127,13 @@ class meta_model(object):
             base_loss_format = ", ".join(["%f" for _ in base_names]) + "\n"
             loss_format = ", ".join(["%f" for _ in base_names + meta_names]) + "\n"
             meta_true_format = ", ".join(["%f" for _ in meta_true_names]) + "\n"
-            
+
+            if train_language:
+                (base_lang_names, 
+                 base_lang_losses) = self.run_base_language_eval(
+                    include_new=include_new)
+                fout_lang.write("epoch, " + ", ".join(base_lang_names) + "\n")
+
             s_epoch  = "0, "
             curr_losses = s_epoch + (loss_format % tuple(
                 base_losses + meta_losses))
@@ -975,6 +1141,11 @@ class meta_model(object):
                 meta_true_losses))
             fout.write(curr_losses)
             fout_meta.write(curr_meta_true)
+
+            if train_language:
+                curr_lang_losses = s_epoch + (lang_loss_format % tuple(
+                    base_lang_losses))
+                fout_lang.write(curr_lang_losses)
 
             if config["sweep_meta_batch_sizes"] is not None:
                 with open(sweep_filename, "w") as fout_sweep:
@@ -998,9 +1169,16 @@ class meta_model(object):
             early_stopping_thresh = config["early_stopping_thresh"]
             lr_decays_every = config["lr_decays_every"]
             lr_decay = config["lr_decay"]
+            language_lr_decay = config["language_lr_decay"]
             meta_lr_decay = config["meta_lr_decay"]
             min_learning_rate = config["min_learning_rate"]
             min_meta_learning_rate = config["min_meta_learning_rate"]
+            min_language_learning_rate = config["min_language_learning_rate"]
+
+
+            self.fill_buffers(num_data_points=config["memory_buffer_size"],
+                              include_new=True)
+            self.refresh_meta_dataset_cache(include_new=include_new)
             for epoch in range(1, num_epochs+1):
                 if epoch % config["refresh_mem_buffs_every"] == 0:
                     self.fill_buffers(num_data_points=config["memory_buffer_size"],
@@ -1018,6 +1196,13 @@ class meta_model(object):
                         str_task = _stringify_polynomial(task)
                         memory_buffer = self.memory_buffers[str_task]
                         self.base_train_step(memory_buffer, learning_rate)
+                        if train_language:
+                            intified_task = self.task_to_ints[str_task]
+                            if intified_task is not None:
+                                self.base_language_train_step(
+                                    intified_task, dataset,
+                                    language_learning_rate)
+
 
                 if epoch % save_every == 0:
                     s_epoch  = "%i, " % epoch
@@ -1032,10 +1217,21 @@ class meta_model(object):
                     curr_meta_true = s_epoch + (meta_true_format % tuple(meta_true_losses))
                     fout.write(curr_losses)
                     fout_meta.write(curr_meta_true)
-                    print(curr_losses)
-                    if np.all(curr_losses < early_stopping_thresh):
-                        print("Early stop!")
-                        break
+                    if train_language:
+                        (_, base_lang_losses) = self.run_base_language_eval(
+                            include_new=include_new)
+                        curr_lang_losses = s_epoch + (lang_loss_format % tuple(
+                            base_lang_losses))
+                        fout_lang.write(curr_lang_losses)
+                        print(curr_losses, curr_lang_losses)
+                        if np.all(curr_losses < early_stopping_thresh) and np.all(curr_lang_losses < early_stopping_thresh):
+                            print("Early stop!")
+                            break
+                    else:
+                        print(curr_losses)
+                        if np.all(curr_losses < early_stopping_thresh):
+                            print("Early stop!")
+                            break
 
 
                 if epoch % lr_decays_every == 0 and epoch > 0:
@@ -1044,6 +1240,10 @@ class meta_model(object):
 
                     if meta_learning_rate > min_meta_learning_rate:
                         meta_learning_rate *= meta_lr_decay
+
+                    if train_language and language_learning_rate > min_language_learning_rate:
+                        language_learning_rate *= language_lr_decay
+
 
             if config["sweep_meta_batch_sizes"] is not None:
                 with open(sweep_filename, "a") as fout_sweep:
