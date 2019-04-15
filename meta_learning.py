@@ -7,6 +7,7 @@ import tensorflow as tf
 import tensorflow.contrib.slim as slim
 import os
 import re
+#import cProfile
 from copy import deepcopy
 from itertools import permutations
 from collections import Counter
@@ -50,11 +51,11 @@ config = {
     "min_language_learning_rate": 3e-8,
     "min_meta_learning_rate": 3e-7,
 
-    "refresh_meta_cache_every": 1, # how many epochs between updates to meta_cache
+    "refresh_meta_cache_every": 5, # how many epochs between updates to meta_cache
     "refresh_mem_buffs_every": 50, # how many epochs between updates to buffers
 
     "max_base_epochs": 3000,
-    "max_new_epochs": 500,
+    "max_new_epochs": 200,
     "num_task_hidden_layers": 3,
     "num_hyper_hidden_layers": 3,
     "train_drop_prob": 0.00, # dropout probability, applied on meta and hyper
@@ -88,7 +89,7 @@ config = {
     "new_meta_tasks": [],
     "new_meta_mappings": ["permute_3210", "add_%f" % 2., "add_%f" % -2., "mult_%f" % 2., "mult_%f" % -2.],
     
-    "train_language": False, # whether to train language as well (only language
+    "train_language": True, # whether to train language as well (only language
                             # inputs, for now)
     "lang_drop_prob": 0.0, # dropout on language processing features
                             # to try to address overfitting
@@ -139,13 +140,13 @@ def _intify_polynomial(p):
     symbs = p.to_symbols(strip_spaces=False)
     symbs = re.sub("\+ -", "-", symbs)
     symbs = symbs.split()
-    symbs_fixed = []
+    ints = []
     for x in symbs:
         if number_regex.match(x):
-            symbs_fixed += list(x)
+            ints += [vocab_to_int[ch] for ch in list(x)]
         else:
-            symbs_fixed.append(x)
-    return symbs_fixed
+            ints.append(vocab_to_int[x])
+    return ints 
 
 
 def _pad(l, length, pad_token="PAD"):
@@ -341,9 +342,6 @@ class meta_model(object):
 #        print(self.max_sentence_len)
         self.intified_base_tasks = [_pad(x, self.max_sentence_len, 0) if len(x) <= self.max_sentence_len else None for x in self.intified_base_tasks]
         self.intified_new_tasks = [_pad(x, self.max_sentence_len, 0) if len(x) <= self.max_sentence_len else None for x in self.intified_new_tasks]
-#        print(self.intified_base_tasks)
-#        print(self.intified_new_tasks)
-        self.task_to_ints = {str_t: int_t for str_t, int_t in zip(self.base_task_names + self.new_task_names, self.intified_base_tasks + self.intified_new_tasks)}
 
         self.meta_pairings_base, self.base_tasks_implied = _get_meta_pairings(
             self.base_tasks, self.base_meta_tasks, self.base_meta_mappings,
@@ -362,8 +360,14 @@ class meta_model(object):
             self.memory_buffer_size, self.num_input,
             self.num_output) for t in self.all_base_tasks + self.base_tasks_implied + [x for x in self.full_tasks_implied if x not in self.base_tasks_implied]}
 
-        self.all_tasks = self.all_initial_tasks + self.all_new_tasks + self.full_tasks_implied
+        self.all_tasks = self.all_initial_tasks + self.all_new_tasks 
+        self.all_tasks_with_implied = self.all_initial_tasks + self.all_new_tasks + self.full_tasks_implied
+#        self.all_initial_tasks = self.all_initial_tasks + self.base_tasks_implied
         self.num_tasks = num_tasks = len(self.all_tasks)
+
+#        self.intified_implied_tasks = [None] * (len(self.base_tasks_implied_names) + len(self.full_tasks_implied_names))
+#        self.task_to_ints = {str_t: np.array([int_t]) if int_t is not None else None for str_t, int_t in zip(self.base_tasks_implied_names + self.full_tasks_implied_names + self.base_task_names + self.new_task_names, self.intified_implied_tasks + self.intified_base_tasks + self.intified_new_tasks)}
+        self.task_to_ints = {str_t: np.array([int_t]) if int_t is not None else None for str_t, int_t in zip(self.base_task_names + self.new_task_names, self.intified_base_tasks + self.intified_new_tasks)}
 
 #        for key, value in self.meta_pairings_base.items():
 #            print(key)
@@ -722,12 +726,11 @@ class meta_model(object):
 
     def base_language_train_step(self, intified_task, memory_buffer, lr):
         input_buff, output_buff = memory_buffer.get_memories()
-        targets, target_mask = self._outcomes_to_targets(output_buff)
         feed_dict = {
             self.base_input_ph: input_buff,
             self.language_input_ph: intified_task,
             self.lang_keep_ph: self.lang_keep_prob,
-            self.base_target_ph: targets,
+            self.base_target_ph: output_buff,
             self.keep_prob_ph: self.tkp,
             self.lr_ph: lr
         }
@@ -798,16 +801,19 @@ class meta_model(object):
             tasks = self.base_tasks
 
         losses = [] 
+        names = []
         for task in tasks:
             task_str = _stringify_polynomial(task)
             intified_task = self.task_to_ints[task_str]
+#            print(task_str)
+#            print(intified_task)
             if intified_task is None:
                 continue
             memory_buffer = self.memory_buffers[task_str]
-            res = self.base_lang_eval(intified_task, memory_buffer)
+            res = self.base_language_eval(intified_task, memory_buffer)
             losses.append(res[0])
+            names.append(task_str)
 
-        names = [_stringify_polynomial(t) for t in tasks]
         return names, losses
 
 
@@ -1132,6 +1138,7 @@ class meta_model(object):
                 (base_lang_names, 
                  base_lang_losses) = self.run_base_language_eval(
                     include_new=include_new)
+                lang_loss_format = ", ".join(["%f" for _ in base_lang_names]) + "\u"
                 fout_lang.write("epoch, " + ", ".join(base_lang_names) + "\n")
 
             s_epoch  = "0, "
@@ -1159,10 +1166,12 @@ class meta_model(object):
             if include_new:
                 tasks = self.all_tasks
                 learning_rate = config["new_init_learning_rate"]
+                language_learning_rate = config["new_init_language_learning_rate"]
                 meta_learning_rate = config["new_init_meta_learning_rate"]
             else:
                 tasks = self.all_initial_tasks
                 learning_rate = config["init_learning_rate"]
+                language_learning_rate = config["init_language_learning_rate"]
                 meta_learning_rate = config["init_meta_learning_rate"]
 
             save_every = config["save_every"]
@@ -1200,7 +1209,7 @@ class meta_model(object):
                             intified_task = self.task_to_ints[str_task]
                             if intified_task is not None:
                                 self.base_language_train_step(
-                                    intified_task, dataset,
+                                    intified_task, memory_buffer,
                                     language_learning_rate)
 
 
@@ -1270,6 +1279,8 @@ for run_i in range(config["run_offset"], config["run_offset"]+config["num_runs"]
     model.run_training(filename_prefix=filename_prefix,
                        num_epochs=config["max_base_epochs"],
                        include_new=False)
+#    cProfile.run('model.run_training(filename_prefix=filename_prefix, num_epochs=config["max_base_epochs"], include_new=False)')
+
     model.save_parameters(filename_prefix + "_guess_checkpoint")
 #    model.save_embeddings(filename=filename_prefix + "_guess_embeddings.csv",
 #                          include_new=True)
@@ -1277,6 +1288,7 @@ for run_i in range(config["run_offset"], config["run_offset"]+config["num_runs"]
     model.run_training(filename_prefix=filename_prefix + "_new",
                        num_epochs=config["max_new_epochs"],
                        include_new=True)
+#    cProfile.run('model.run_training(filename_prefix=filename_prefix + "_new", num_epochs=config["max_new_epochs"], include_new=True)')
     model.save_parameters(filename_prefix + "_final_checkpoint")
 
 #    model.save_embeddings(filename=filename_prefix + "_final_embeddings.csv",
