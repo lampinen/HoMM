@@ -67,7 +67,7 @@ config = {
                                    # hyper weights that generate the task
                                    # parameters. 
 
-    "output_dir": "/mnt/fs2/lampinen/polynomials/language/",
+    "output_dir": "/mnt/fs2/lampinen/polynomials/language_only/",
     "save_every": 20, 
     "sweep_meta_batch_sizes": [10, 20, 30, 50, 100, 200, 400, 800], # if not None,
                                                                     # eval each at
@@ -91,6 +91,8 @@ config = {
     
     "train_language": True, # whether to train language as well (only language
                             # inputs, for now)
+    "train_base": False, 
+    "train_meta": False,
     "lang_drop_prob": 0.0, # dropout on language processing features
                             # to try to address overfitting
 
@@ -1118,6 +1120,8 @@ class meta_model(object):
         meta_filename = filename_prefix + "_meta_true_losses.csv"
         lang_filename = filename_prefix + "_language_losses.csv"
         train_language = config["train_language"]
+        train_base = config["train_base"]
+        train_meta = config["train_meta"]
 
         with open(loss_filename, "w") as fout, open(meta_filename, "w") as fout_meta, open(lang_filename, "w") as fout_lang:
             base_names, base_losses = self.run_base_eval(
@@ -1138,7 +1142,7 @@ class meta_model(object):
                 (base_lang_names, 
                  base_lang_losses) = self.run_base_language_eval(
                     include_new=include_new)
-                lang_loss_format = ", ".join(["%f" for _ in base_lang_names]) + "\u"
+                lang_loss_format = ", ".join(["%f" for _ in base_lang_names]) + "\n"
                 fout_lang.write("epoch, " + ", ".join(base_lang_names) + "\n")
 
             s_epoch  = "0, "
@@ -1199,12 +1203,14 @@ class meta_model(object):
                 for task_i in order:
                     task = tasks[task_i]
                     if isinstance(task, str):
-                        dataset = self.meta_dataset_cache[task]
-                        self.meta_train_step(dataset, meta_learning_rate)
+                        if train_meta:
+                            dataset = self.meta_dataset_cache[task]
+                            self.meta_train_step(dataset, meta_learning_rate)
                     else:
                         str_task = _stringify_polynomial(task)
                         memory_buffer = self.memory_buffers[str_task]
-                        self.base_train_step(memory_buffer, learning_rate)
+                        if train_base:
+                            self.base_train_step(memory_buffer, learning_rate)
                         if train_language:
                             intified_task = self.task_to_ints[str_task]
                             if intified_task is not None:
