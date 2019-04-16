@@ -51,10 +51,10 @@ config = {
     "min_language_learning_rate": 3e-8,
     "min_meta_learning_rate": 3e-7,
 
-    "refresh_meta_cache_every": 5, # how many epochs between updates to meta_cache
+    "refresh_meta_cache_every": 1, # how many epochs between updates to meta_cache
     "refresh_mem_buffs_every": 50, # how many epochs between updates to buffers
 
-    "max_base_epochs": 3000,
+    "max_base_epochs": 1000,
     "max_new_epochs": 200,
     "num_task_hidden_layers": 3,
     "num_hyper_hidden_layers": 3,
@@ -929,12 +929,14 @@ class meta_model(object):
     def run_meta_loss_eval(self, include_new=False):
         meta_tasks = self.all_base_meta_tasks 
         if include_new:
-            meta_tasks += self.new_meta_tasks 
+            meta_tasks = self.all_meta_tasks 
 
         names = []
         losses = []
         for t in meta_tasks:
             meta_dataset = self.meta_dataset_cache[t]
+            if meta_dataset == {}: # new tasks aren't cached
+                meta_dataset = self.get_meta_dataset(t, include_new) 
             loss = self.meta_loss_eval(meta_dataset)
             names.append(t)
             losses.append(loss)
