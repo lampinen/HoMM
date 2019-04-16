@@ -8,14 +8,22 @@ library(tidyverse)
 ```
 
 ```{r}
-num_runs = 2
+num_runs = 5
 results_dir = "../results/"
 
-result_subdirs = c("basic", "basic_h128_slower")
-                   
+result_subdirs = c("basic_old")
+language_result_subdirs = c("language")
+result_subdirs = c(result_subdirs, language_result_subdirs)
+
+language_only_subdirs = c("language_only", "conditioned_language_baseline") # missing other losses
+all_result_subdirs = c(result_subdirs, language_only_subdirs)
+language_result_subdirs = c(language_result_subdirs, language_only_subdirs)
 
 name_run_type = function(run_type) { # names for plotting
   case_when(run_type == "basic" ~ "Basic",
+            run_type == "language" ~ "Language (full)",
+            run_type == "language_only" ~ "Language + Hyper (no meta)",
+            run_type == "conditioned_language_baseline" ~ "Language + FF",
             T ~ run_type)
 }
 ```
@@ -27,7 +35,7 @@ read_config = function(config_file) {
     separate(`key, value`, c("key", "value"), sep=",", extra="merge") %>%
     spread(key, value) %>%
     mutate_at(c("base_task_names", "new_task_names", "base_meta_tasks", "base_meta_binary_funcs", "base_meta_mappings", "new_meta_mappings"), function(x) {
-      x = gsub("\\\"|[][]| ", "", x)
+      x = gsub("\\\"|[][]| |\'", "", x)
       return(str_split(x, ","))
     } )
 }
@@ -106,7 +114,7 @@ summary_plot = function(data,  x_var, y_var, color_var, optimal_baseline_data=NU
 ```
 
 ```{r}
-config_d = load_d(results_dir, result_subdirs, num_runs, "config")
+config_d = load_d(results_dir, all_result_subdirs, num_runs, "config")
 ```
 
 ```{r}
@@ -160,7 +168,7 @@ summary_plot(base_d,
 ```
 
 
-# meta learning
+# meta task learning
 
 ```{r}
 original_meta_d = load_d(results_dir, result_subdirs, num_runs, "meta_true_losses") %>% 
@@ -207,3 +215,41 @@ summary_plot(meta_d,
   ylim(0, NA)
 ```
 
+
+# language tests
+
+```{r}
+original_lang_d = load_d(results_dir, language_result_subdirs, num_runs, "language_losses") %>% 
+  filter(epoch == 0) %>%
+  select(epoch, run, named_run_type, run_type,
+         matches("\\d\\.\\d\\d")) %>% # all base tasks have at least one coefficient
+  gather(polynomial, loss, -epoch, -contains("run")) %>%
+  mutate(is_new=F, learned="Before training")
+```
+
+```{r}
+lang_d = load_d(results_dir, language_result_subdirs, num_runs, "new_language_losses") %>% 
+  filter(epoch == 0) %>%
+  select(epoch, run, named_run_type, run_type,
+         matches("\\d\\.\\d\\d")) %>% # all base tasks have at least one coefficient
+  gather(polynomial, loss, -epoch, -contains("run"))
+```
+
+```{r}
+lang_d = lang_d %>%
+  rowwise() %>%
+  mutate(is_new = check_if_new_task(run, run_type, polynomial)) %>%
+  ungroup() %>%
+  mutate(learned="After training")
+```
+
+```{r}
+lang_d = bind_rows(original_lang_d, lang_d)
+```
+
+```{r}
+summary_plot(lang_d,
+             "learned", "loss", "is_new") +
+  facet_wrap(. ~ named_run_type) 
+  
+```
