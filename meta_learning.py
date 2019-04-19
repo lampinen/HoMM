@@ -55,7 +55,7 @@ config = {
     "refresh_mem_buffs_every": 50, # how many epochs between updates to buffers
 
     "max_base_epochs": 3000,
-    "max_new_epochs": 200,
+    "max_new_epochs": 100,
     "num_task_hidden_layers": 3,
     "num_hyper_hidden_layers": 3,
     "train_drop_prob": 0.00, # dropout probability, applied on meta and hyper
