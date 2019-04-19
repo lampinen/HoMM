@@ -159,7 +159,7 @@ class polynomial_family(object):
                           intercept_probability=0.5, term_probability=0.5):
         num_relevant_variables = np.random.randint(len(self.variables) + 1)
         coefficients = {}
-        while coefficients == {}:
+        while coefficients == {} or (num_relevant_variables > 0 and coefficients.keys() == ["1"]):
             if num_relevant_variables == 0 or np.random.rand() < intercept_probability: 
                 constant_coefficient = np.random.randn() * coefficient_sd + coefficient_mean
                 coefficients["1"] = constant_coefficient
