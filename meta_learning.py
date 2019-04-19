@@ -67,7 +67,7 @@ config = {
                                    # hyper weights that generate the task
                                    # parameters. 
 
-    "output_dir": "/mnt/fs2/lampinen/polynomials/language/",
+    "output_dir": "/mnt/fs2/lampinen/polynomials/new_results/language/",
     "save_every": 20, 
     "sweep_meta_batch_sizes": [10, 20, 30, 50, 100, 200, 400, 800], # if not None,
                                                                     # eval each at
@@ -76,8 +76,8 @@ config = {
     "memory_buffer_size": 1024, # How many points for each polynomial are stored
     "meta_batch_size": 128, # how many meta-learner sees
     "early_stopping_thresh": 0.05,
-    "num_base_tasks": 100, # prior to meta-augmentation
-    "num_new_tasks": 10,
+    "num_base_tasks": 200, # prior to meta-augmentation
+    "num_new_tasks": 30,
     "poly_coeff_sd": 2.5,
     "point_val_range": 1,
 
@@ -111,16 +111,6 @@ config["base_meta_binary_funcs"] = ["binary_sum", "binary_mult"]
 # filtering out held-out meta tasks
 config["base_meta_tasks"] = [x for x in config["base_meta_tasks"] if x not in config["new_meta_tasks"]]
 config["meta_mappings"] = [x for x in config["base_meta_mappings"] if x not in config["new_meta_mappings"]]
-
-np.random.seed(0)
-config["base_tasks"] = [poly_fam.sample_polynomial(coefficient_sd=config["poly_coeff_sd"]) for _ in range(config["num_base_tasks"])]
-config["new_tasks"] = [poly_fam.sample_polynomial(coefficient_sd=config["poly_coeff_sd"]) for _ in range(config["num_new_tasks"])]
-config["base_task_names"] = [x.to_symbols() for x in config["base_tasks"]] 
-config["new_task_names"] = [x.to_symbols() for x in config["new_tasks"]] 
-                        
-# tasks implied by meta mappings, network will also be trained on these  
-config["implied_base_tasks"] = [] 
-config["implied_new_tasks"] = []
 
 
 # language
@@ -1276,6 +1266,15 @@ class meta_model(object):
 for run_i in range(config["run_offset"], config["run_offset"]+config["num_runs"]):
     np.random.seed(run_i)
     tf.set_random_seed(run_i)
+    config["base_tasks"] = [poly_fam.sample_polynomial(coefficient_sd=config["poly_coeff_sd"]) for _ in range(config["num_base_tasks"])]
+    config["new_tasks"] = [poly_fam.sample_polynomial(coefficient_sd=config["poly_coeff_sd"]) for _ in range(config["num_new_tasks"])]
+    config["base_task_names"] = [x.to_symbols() for x in config["base_tasks"]] 
+    config["new_task_names"] = [x.to_symbols() for x in config["new_tasks"]] 
+                            
+# tasks implied by meta mappings, network will also be trained on these  
+    config["implied_base_tasks"] = [] 
+    config["implied_new_tasks"] = []
+
     filename_prefix = config["output_dir"] + "run%i" % run_i
     print("Now running %s" % filename_prefix)
     _save_config(filename_prefix + "_config.csv", config)
