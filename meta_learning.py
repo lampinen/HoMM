@@ -67,7 +67,7 @@ config = {
                                    # hyper weights that generate the task
                                    # parameters. 
 
-    "output_dir": "/mnt/fs2/lampinen/polynomials/new_results/language/",
+    "output_dir": "/mnt/fs2/lampinen/polynomials/new_results/basic_smaller/",
     "save_every": 20, 
     "sweep_meta_batch_sizes": [10, 20, 30, 50, 100, 200, 400, 800], # if not None,
                                                                     # eval each at
@@ -76,7 +76,7 @@ config = {
     "memory_buffer_size": 1024, # How many points for each polynomial are stored
     "meta_batch_size": 128, # how many meta-learner sees
     "early_stopping_thresh": 0.05,
-    "num_base_tasks": 200, # prior to meta-augmentation
+    "num_base_tasks": 100, # prior to meta-augmentation
     "num_new_tasks": 30,
     "poly_coeff_sd": 2.5,
     "point_val_range": 1,
@@ -89,7 +89,7 @@ config = {
     "new_meta_tasks": [],
     "new_meta_mappings": ["permute_3210", "add_%f" % 2., "add_%f" % -2., "mult_%f" % 2., "mult_%f" % -2.],
     
-    "train_language": True, # whether to train language as well (only language
+    "train_language": False, # whether to train language as well (only language
                             # inputs, for now)
     "train_base": True, 
     "train_meta": True,
