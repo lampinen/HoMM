@@ -51,7 +51,7 @@ config = {
     "min_language_learning_rate": 3e-8,
     "min_meta_learning_rate": 3e-7,
 
-    "refresh_meta_cache_every": 5, # how many epochs between updates to meta_cache
+    "refresh_meta_cache_every": 1, # how many epochs between updates to meta_cache
     "refresh_mem_buffs_every": 50, # how many epochs between updates to buffers
 
     "max_base_epochs": 3000,
@@ -67,7 +67,7 @@ config = {
                                    # hyper weights that generate the task
                                    # parameters. 
 
-    "output_dir": "/mnt/fs2/lampinen/polynomials/language_only/",
+    "output_dir": "/mnt/fs2/lampinen/polynomials/language/",
     "save_every": 20, 
     "sweep_meta_batch_sizes": [10, 20, 30, 50, 100, 200, 400, 800], # if not None,
                                                                     # eval each at
@@ -91,8 +91,8 @@ config = {
     
     "train_language": True, # whether to train language as well (only language
                             # inputs, for now)
-    "train_base": False, 
-    "train_meta": False,
+    "train_base": True, 
+    "train_meta": True,
     "lang_drop_prob": 0.0, # dropout on language processing features
                             # to try to address overfitting
 
@@ -929,12 +929,14 @@ class meta_model(object):
     def run_meta_loss_eval(self, include_new=False):
         meta_tasks = self.all_base_meta_tasks 
         if include_new:
-            meta_tasks += self.new_meta_tasks 
+            meta_tasks = self.all_meta_tasks 
 
         names = []
         losses = []
         for t in meta_tasks:
             meta_dataset = self.meta_dataset_cache[t]
+            if meta_dataset == {}: # new tasks aren't cached
+                meta_dataset = self.get_meta_dataset(t, include_new) 
             loss = self.meta_loss_eval(meta_dataset)
             names.append(t)
             losses.append(loss)
