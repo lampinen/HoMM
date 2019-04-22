@@ -354,6 +354,8 @@ class meta_model(object):
 
         self.all_tasks = self.all_initial_tasks + self.all_new_tasks 
         self.all_tasks_with_implied = self.all_initial_tasks + self.all_new_tasks + self.full_tasks_implied
+        self.initial_base_tasks_with_implied = self.base_tasks + self.base_tasks_implied
+        self.all_base_tasks_with_implied = self.all_base_tasks + self.base_tasks_implied
 #        self.all_initial_tasks = self.all_initial_tasks + self.base_tasks_implied
         self.num_tasks = num_tasks = len(self.all_tasks)
 
@@ -681,9 +683,9 @@ class meta_model(object):
     def fill_buffers(self, num_data_points=1, include_new=False):
         """Add new "experiences" to memory buffers."""
         if include_new:
-            this_tasks = self.all_base_tasks
+            this_tasks = self.all_base_tasks_with_implied
         else:
-            this_tasks = self.base_tasks
+            this_tasks = self.initial_base_tasks_with_implied
         for t in this_tasks:
             buff = self.memory_buffers[_stringify_polynomial(t)]
             x_data = np.zeros([num_data_points, self.config["num_input"]])
