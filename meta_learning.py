@@ -54,8 +54,8 @@ config = {
     "refresh_meta_cache_every": 1, # how many epochs between updates to meta_cache
     "refresh_mem_buffs_every": 50, # how many epochs between updates to buffers
 
-    "max_base_epochs": 3000,
-    "max_new_epochs": 100,
+    "max_base_epochs": 0,#3000,
+    "max_new_epochs": 0,#100,
     "num_task_hidden_layers": 3,
     "num_hyper_hidden_layers": 3,
     "train_drop_prob": 0.00, # dropout probability, applied on meta and hyper
@@ -67,7 +67,7 @@ config = {
                                    # hyper weights that generate the task
                                    # parameters. 
 
-    "output_dir": "/mnt/fs2/lampinen/polynomials/new_results/basic_smaller/",
+    "output_dir": "/mnt/fs2/lampinen/polynomials/new_results/untrained_baseline/",
     "save_every": 20, 
     "sweep_meta_batch_sizes": [10, 20, 30, 50, 100, 200, 400, 800], # if not None,
                                                                     # eval each at
@@ -76,7 +76,7 @@ config = {
     "memory_buffer_size": 1024, # How many points for each polynomial are stored
     "meta_batch_size": 128, # how many meta-learner sees
     "early_stopping_thresh": 0.05,
-    "num_base_tasks": 100, # prior to meta-augmentation
+    "num_base_tasks": 200, # prior to meta-augmentation
     "num_new_tasks": 30,
     "poly_coeff_sd": 2.5,
     "point_val_range": 1,
