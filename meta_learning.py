@@ -89,7 +89,7 @@ config = {
     "new_meta_tasks": [],
     "new_meta_mappings": ["permute_3210", "add_%f" % 2., "add_%f" % -2., "mult_%f" % 2., "mult_%f" % -2.],
     
-    "train_language": False, # whether to train language as well (only language
+    "train_language": True, # whether to train language as well (only language
                             # inputs, for now)
     "train_base": True, 
     "train_meta": True,
