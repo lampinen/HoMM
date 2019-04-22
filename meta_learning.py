@@ -1060,7 +1060,7 @@ class meta_model(object):
                     meta_dataset, {"x1": task1_embedding,
                                    "x2": task2_embedding})
 
-                names.append(meta_task + ":" + task + "->" + other)
+                names.append(meta_task + ":" + task1 + ":" + task2 + "->" + other)
                 this_loss = self.base_embedding_eval(mapped_embedding, other_buffer)[0]
                 losses.append(this_loss)
 
