@@ -67,27 +67,27 @@ config = {
                                    # hyper weights that generate the task
                                    # parameters. 
 
-    "output_dir": "/mnt/fs2/lampinen/polynomials/new_results/untrained_baseline/",
+    "output_dir": "/mnt/fs2/lampinen/polynomials/newer_results/untrained_baseline/",
     "save_every": 20, 
     "sweep_meta_batch_sizes": [10, 20, 30, 50, 100, 200, 400, 800], # if not None,
                                                                     # eval each at
                                                                     # training ends
 
     "memory_buffer_size": 1024, # How many points for each polynomial are stored
-    "meta_batch_size": 128, # how many meta-learner sees
+    "meta_batch_size": 15, # how many meta-learner sees
     "early_stopping_thresh": 0.05,
-    "num_base_tasks": 200, # prior to meta-augmentation
-    "num_new_tasks": 30,
+    "num_base_tasks": 20, # prior to meta-augmentation
+    "num_new_tasks": 20,
     "poly_coeff_sd": 2.5,
     "point_val_range": 1,
 
-    "meta_add_vals": [-3, -2, -1, 1, 3],
+    "meta_add_vals": [-3, -1, 1, 3],
     "meta_mult_vals": [-3, -1, 3],
-    "num_meta_binary_pairs": 200, # for binary tasks like multiplying 
-                                  # polynomials, how many pairs does the 
-                                  # system see?
+    "num_meta_binary_pairs": 20, # for binary tasks like multiplying 
+                                 # polynomials, how many pairs does the 
+                                 # system see?
     "new_meta_tasks": [],
-    "new_meta_mappings": ["permute_3210", "add_%f" % 2., "add_%f" % -2., "mult_%f" % 2., "mult_%f" % -2.],
+    "new_meta_mappings": ["add_%f" % 2., "add_%f" % -2., "mult_%f" % 2., "mult_%f" % -2.],
     
     "train_language": True, # whether to train language as well (only language
                             # inputs, for now)
@@ -104,7 +104,14 @@ poly_fam = polynomial_family(config["num_variables"], config["max_degree"])
 config["variables"] = poly_fam.variables
 
 config["base_meta_tasks"] = ["is_constant_polynomial"] + ["is_intercept_nonzero"] + ["is_%s_relevant" % var for var in config["variables"]]
-config["base_meta_mappings"] = ["square"] + ["add_%f" % c for c in config["meta_add_vals"]] + ["mult_%f" % c for c in config["meta_mult_vals"]] + ["permute_" + "".join([str(x) for x in p]) for p in permutations(range(config["num_variables"]))]
+
+config["base_meta_mappings"] = ["square"] + ["add_%f" % c for c in config["meta_add_vals"]] + ["mult_%f" % c for c in config["meta_mult_vals"]]
+permutation_mappings = ["permute_" + "".join([str(x) for x in p]) for p in permutations(range(config["num_variables"]))]
+np.random.seed(0)
+np.random.shuffle(permutation_mappings)
+config["base_meta_mappings"] += permutation_mappings[:len(permutation_mappings)//2]
+config["new_meta_mappings"] += permutation_mappings[len(permutation_mappings)//2:]
+
 config["base_meta_binary_funcs"] = ["binary_sum", "binary_mult"] 
 
 
@@ -126,7 +133,7 @@ def _stringify_polynomial(p):
     return p.to_symbols(strip_spaces=True)
 
 
-number_regex = re.compile('-?[0-9]\.[0-9][0-9]')
+number_regex = re.compile('-?[0-9]+\.[0-9][0-9]')
 def _intify_polynomial(p):
     """Helper for language inputs"""
     symbs = p.to_symbols(strip_spaces=False)
@@ -304,12 +311,10 @@ class meta_model(object):
         # base datasets / memory_buffers
         self.base_tasks = base_tasks
         self.base_task_names = [_stringify_polynomial(t) for t in base_tasks]
-        self.intified_base_tasks =  [_intify_polynomial(t) for t in base_tasks]
 
         # new datasets / memory_buffers
         self.new_tasks = new_tasks
         self.new_task_names = [_stringify_polynomial(t) for t in new_tasks]
-        self.intified_new_tasks =  [_intify_polynomial(t) for t in new_tasks]
 
         self.all_base_tasks = self.base_tasks + self.new_tasks
 
@@ -329,11 +334,6 @@ class meta_model(object):
         self.all_new_tasks = self.new_tasks + self.all_new_meta_tasks
 
         # think that's enough redundant variables?
-        max_sentence_len_obs = max(max([len(x) for x in self.intified_new_tasks]), max([len(x) for x in self.intified_base_tasks]))
-        self.max_sentence_len = min(config["max_sentence_len"], max_sentence_len_obs)
-#        print(self.max_sentence_len)
-        self.intified_base_tasks = [_pad(x, self.max_sentence_len, 0) if len(x) <= self.max_sentence_len else None for x in self.intified_base_tasks]
-        self.intified_new_tasks = [_pad(x, self.max_sentence_len, 0) if len(x) <= self.max_sentence_len else None for x in self.intified_new_tasks]
 
         self.meta_pairings_base, self.base_tasks_implied = _get_meta_pairings(
             self.base_tasks, self.base_meta_tasks, self.base_meta_mappings,
@@ -355,13 +355,20 @@ class meta_model(object):
         self.all_tasks = self.all_initial_tasks + self.all_new_tasks 
         self.all_tasks_with_implied = self.all_initial_tasks + self.all_new_tasks + self.full_tasks_implied
         self.initial_base_tasks_with_implied = self.base_tasks + self.base_tasks_implied
-        self.all_base_tasks_with_implied = self.all_base_tasks + self.base_tasks_implied
+        self.all_base_tasks_with_implied = self.all_base_tasks + self.full_tasks_implied
+        self.all_initial_tasks_with_implied = self.all_initial_tasks + self.base_tasks_implied
 #        self.all_initial_tasks = self.all_initial_tasks + self.base_tasks_implied
         self.num_tasks = num_tasks = len(self.all_tasks)
 
-#        self.intified_implied_tasks = [None] * (len(self.base_tasks_implied_names) + len(self.full_tasks_implied_names))
-#        self.task_to_ints = {str_t: np.array([int_t]) if int_t is not None else None for str_t, int_t in zip(self.base_tasks_implied_names + self.full_tasks_implied_names + self.base_task_names + self.new_task_names, self.intified_implied_tasks + self.intified_base_tasks + self.intified_new_tasks)}
-        self.task_to_ints = {str_t: np.array([int_t]) if int_t is not None else None for str_t, int_t in zip(self.base_task_names + self.new_task_names, self.intified_base_tasks + self.intified_new_tasks)}
+        self.intified_base_tasks =  [_intify_polynomial(t) for t in self.initial_base_tasks_with_implied]
+        self.intified_new_tasks =  [_intify_polynomial(t) for t in self.all_base_tasks_with_implied]
+        max_sentence_len_obs = max(max([len(x) for x in self.intified_new_tasks]), max([len(x) for x in self.intified_base_tasks]))
+        self.max_sentence_len = min(config["max_sentence_len"], max_sentence_len_obs)
+#        print(self.max_sentence_len)
+        self.intified_base_tasks = [_pad(x, self.max_sentence_len, 0) if len(x) <= self.max_sentence_len else None for x in self.intified_base_tasks]
+        self.intified_new_tasks = [_pad(x, self.max_sentence_len, 0) if len(x) <= self.max_sentence_len else None for x in self.intified_new_tasks]
+
+        self.task_to_ints = {str_t: np.array([int_t]) if int_t is not None else None for str_t, int_t in zip(self.base_task_names + self.base_tasks_implied_names + self.new_task_names + self.full_tasks_implied_names, self.intified_base_tasks + self.intified_new_tasks)}
 
 #        for key, value in self.meta_pairings_base.items():
 #            print(key)
@@ -748,9 +755,9 @@ class meta_model(object):
     def run_base_eval(self, include_new=False, sweep_meta_batch_sizes=False):
         """sweep_meta_batch_sizes: False or a list of meta batch sizes to try"""
         if include_new:
-            tasks = self.all_base_tasks
+            tasks = self.all_base_tasks_with_implied
         else:
-            tasks = self.base_tasks
+            tasks = self.initial_base_tasks_with_implied
 
         losses = [] 
         if sweep_meta_batch_sizes:
@@ -790,9 +797,9 @@ class meta_model(object):
 
     def run_base_language_eval(self, include_new=False):
         if include_new:
-            tasks = self.all_base_tasks
+            tasks = self.all_base_tasks_with_implied
         else:
-            tasks = self.base_tasks
+            tasks = self.initial_base_tasks_with_implied
 
         losses = [] 
         names = []
@@ -1162,12 +1169,12 @@ class meta_model(object):
                         fout_sweep.write(swept_losses)
 
             if include_new:
-                tasks = self.all_tasks
+                tasks = self.all_tasks_with_implied
                 learning_rate = config["new_init_learning_rate"]
                 language_learning_rate = config["new_init_language_learning_rate"]
                 meta_learning_rate = config["new_init_meta_learning_rate"]
             else:
-                tasks = self.all_initial_tasks
+                tasks = self.all_initial_tasks_with_implied
                 learning_rate = config["init_learning_rate"]
                 language_learning_rate = config["init_language_learning_rate"]
                 meta_learning_rate = config["init_meta_learning_rate"]
