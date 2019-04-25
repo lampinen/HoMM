@@ -36,7 +36,7 @@ config = {
 
     "init_learning_rate": 1e-4,
     "init_language_learning_rate": 1e-4,
-    "init_meta_learning_rate": 1e-4,
+    "init_meta_learning_rate": 3e-5,
 
     "new_init_learning_rate": 1e-5,
     "new_init_language_learning_rate": 1e-5,
@@ -54,8 +54,8 @@ config = {
     "refresh_meta_cache_every": 1, # how many epochs between updates to meta_cache
     "refresh_mem_buffs_every": 50, # how many epochs between updates to buffers
 
-    "max_base_epochs": 3000,
-    "max_new_epochs": 100,
+    "max_base_epochs": 0,#4000,
+    "max_new_epochs": 0,#100,
     "num_task_hidden_layers": 3,
     "num_hyper_hidden_layers": 3,
     "train_drop_prob": 0.00, # dropout probability, applied on meta and hyper
@@ -67,7 +67,7 @@ config = {
                                    # hyper weights that generate the task
                                    # parameters. 
 
-    "output_dir": "/mnt/fs2/lampinen/polynomials/newer_results/language/",
+    "output_dir": "/mnt/fs2/lampinen/polynomials/newer_results_no_binary/untrained_baseline/",
     "save_every": 20, 
     "sweep_meta_batch_sizes": [10, 20, 30, 50, 100, 200, 400, 800], # if not None,
                                                                     # eval each at
@@ -89,7 +89,7 @@ config = {
     "new_meta_tasks": [],
     "new_meta_mappings": ["add_%f" % 2., "add_%f" % -2., "mult_%f" % 2., "mult_%f" % -2.],
     
-    "train_language": True, # whether to train language as well (only language
+    "train_language": False, # whether to train language as well (only language
                             # inputs, for now)
     "train_base": True, 
     "train_meta": True,
@@ -112,7 +112,7 @@ np.random.shuffle(permutation_mappings)
 config["base_meta_mappings"] += permutation_mappings[:len(permutation_mappings)//2]
 config["new_meta_mappings"] += permutation_mappings[len(permutation_mappings)//2:]
 
-config["base_meta_binary_funcs"] = ["binary_sum", "binary_mult"] 
+config["base_meta_binary_funcs"] = []#["binary_sum", "binary_mult"] 
 
 
 # filtering out held-out meta tasks
