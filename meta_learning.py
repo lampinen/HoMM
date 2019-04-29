@@ -33,6 +33,7 @@ config = {
 
     "num_lstm_layers": 2, # for language processing
     "max_sentence_len": 20, # Any longer than this will not be trained
+    "optimizer": "RMSProp",
 
     "init_learning_rate": 1e-4,
     "init_language_learning_rate": 1e-4,
@@ -49,13 +50,13 @@ config = {
     "lr_decays_every": 100,
     "min_learning_rate": 3e-8,
     "min_language_learning_rate": 3e-8,
-    "min_meta_learning_rate": 3e-7,
+    "min_meta_learning_rate": 1e-7,
 
     "refresh_meta_cache_every": 1, # how many epochs between updates to meta_cache
     "refresh_mem_buffs_every": 50, # how many epochs between updates to buffers
 
-    "max_base_epochs": 0,#4000,
-    "max_new_epochs": 0,#100,
+    "max_base_epochs": 8000,
+    "max_new_epochs": 100,
     "num_task_hidden_layers": 3,
     "num_hyper_hidden_layers": 3,
     "train_drop_prob": 0.00, # dropout probability, applied on meta and hyper
@@ -67,23 +68,23 @@ config = {
                                    # hyper weights that generate the task
                                    # parameters. 
 
-    "output_dir": "/mnt/fs2/lampinen/polynomials/newer_results_no_binary/untrained_baseline/",
+    "output_dir": "/mnt/fs2/lampinen/polynomials/newest_results/basic/",
     "save_every": 20, 
-    "sweep_meta_batch_sizes": [10, 20, 30, 50, 100, 200, 400, 800], # if not None,
-                                                                    # eval each at
-                                                                    # training ends
+    "sweep_meta_batch_sizes": [5, 10, 20, 30, 40], # if not None,
+                                                   # eval each at
+                                                   # training ends
 
     "memory_buffer_size": 1024, # How many points for each polynomial are stored
-    "meta_batch_size": 15, # how many meta-learner sees
+    "meta_batch_size": 32, # how many meta-learner sees
     "early_stopping_thresh": 0.05,
-    "num_base_tasks": 20, # prior to meta-augmentation
-    "num_new_tasks": 20,
+    "num_base_tasks": 40, # prior to meta-augmentation
+    "num_new_tasks": 40,
     "poly_coeff_sd": 2.5,
     "point_val_range": 1,
 
     "meta_add_vals": [-3, -1, 1, 3],
     "meta_mult_vals": [-3, -1, 3],
-    "num_meta_binary_pairs": 20, # for binary tasks like multiplying 
+    "num_meta_binary_pairs": 40, # for binary tasks like multiplying 
                                  # polynomials, how many pairs does the 
                                  # system see?
     "new_meta_tasks": [],
@@ -112,7 +113,7 @@ np.random.shuffle(permutation_mappings)
 config["base_meta_mappings"] += permutation_mappings[:len(permutation_mappings)//2]
 config["new_meta_mappings"] += permutation_mappings[len(permutation_mappings)//2:]
 
-config["base_meta_binary_funcs"] = []#["binary_sum", "binary_mult"] 
+config["base_meta_binary_funcs"] = ["binary_sum", "binary_mult"] 
 
 
 # filtering out held-out meta tasks
@@ -665,7 +666,12 @@ class meta_model(object):
             tf.square(self.meta_bf_output - self.meta_target_ph), axis=1)
         self.total_meta_bf_loss = tf.reduce_mean(self.meta_bf_loss)
 
-        optimizer = tf.train.RMSPropOptimizer(self.lr_ph)
+        if config["optimizer"] == "Adam":
+            optimizer = tf.train.AdamOptimizer(self.lr_ph)
+        elif config["optimizer"] == "RMSProp":
+            optimizer = tf.train.RMSPropOptimizer(self.lr_ph)
+        else:
+            raise ValueError("Unknown optimizer: %s" % config["optimizer"])
 
         self.base_train = optimizer.minimize(self.total_base_loss)
         self.base_lang_train = optimizer.minimize(self.total_base_lang_loss)
