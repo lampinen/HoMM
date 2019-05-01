@@ -33,7 +33,7 @@ config = {
 
     "num_lstm_layers": 2, # for language processing
     "max_sentence_len": 20, # Any longer than this will not be trained
-    "optimizer": "RMSProp",
+    "optimizer": "Adam",
 
     "init_learning_rate": 1e-4,
     "init_language_learning_rate": 1e-4,
@@ -45,7 +45,7 @@ config = {
 
     "lr_decay": 0.85,
     "language_lr_decay": 0.8,
-    "meta_lr_decay": 0.9,
+    "meta_lr_decay": 0.85,
 
     "lr_decays_every": 100,
     "min_learning_rate": 3e-8,
@@ -55,7 +55,7 @@ config = {
     "refresh_meta_cache_every": 1, # how many epochs between updates to meta_cache
     "refresh_mem_buffs_every": 50, # how many epochs between updates to buffers
 
-    "max_base_epochs": 8000,
+    "max_base_epochs": 5000,
     "max_new_epochs": 100,
     "num_task_hidden_layers": 3,
     "num_hyper_hidden_layers": 3,
@@ -68,23 +68,23 @@ config = {
                                    # hyper weights that generate the task
                                    # parameters. 
 
-    "output_dir": "/mnt/fs2/lampinen/polynomials/newest_results/basic/",
+    "output_dir": "/mnt/fs2/lampinen/polynomials/newest_results/basic_ADAM_nobinary_shorter/",
     "save_every": 20, 
-    "sweep_meta_batch_sizes": [5, 10, 20, 30, 40], # if not None,
+    "sweep_meta_batch_sizes": [5, 10, 20, 30, 40, 80], # if not None,
                                                    # eval each at
                                                    # training ends
 
     "memory_buffer_size": 1024, # How many points for each polynomial are stored
-    "meta_batch_size": 32, # how many meta-learner sees
+    "meta_batch_size": 50, # how many meta-learner sees
     "early_stopping_thresh": 0.05,
-    "num_base_tasks": 40, # prior to meta-augmentation
+    "num_base_tasks": 60, # prior to meta-augmentation
     "num_new_tasks": 40,
     "poly_coeff_sd": 2.5,
     "point_val_range": 1,
 
     "meta_add_vals": [-3, -1, 1, 3],
     "meta_mult_vals": [-3, -1, 3],
-    "num_meta_binary_pairs": 40, # for binary tasks like multiplying 
+    "num_meta_binary_pairs": 60, # for binary tasks like multiplying 
                                  # polynomials, how many pairs does the 
                                  # system see?
     "new_meta_tasks": [],
@@ -113,7 +113,7 @@ np.random.shuffle(permutation_mappings)
 config["base_meta_mappings"] += permutation_mappings[:len(permutation_mappings)//2]
 config["new_meta_mappings"] += permutation_mappings[len(permutation_mappings)//2:]
 
-config["base_meta_binary_funcs"] = ["binary_sum", "binary_mult"] 
+config["base_meta_binary_funcs"] = []#["binary_sum", "binary_mult"] 
 
 
 # filtering out held-out meta tasks
