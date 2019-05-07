@@ -68,7 +68,7 @@ config = {
                                    # hyper weights that generate the task
                                    # parameters. 
 
-    "output_dir": "/mnt/fs2/lampinen/polynomials/newest_results/basic_separate_meta/",
+    "output_dir": "/mnt/fs2/lampinen/polynomials/newest_results/nometa/",
     "save_every": 20, 
     "sweep_meta_batch_sizes": [5, 10, 20, 30, 40, 80], # if not None,
                                                    # eval each at
@@ -93,8 +93,8 @@ config = {
     "train_language": False, # whether to train language as well (only language
                             # inputs, for now)
     "train_base": True, 
-    "train_meta": True,
-    "separate_meta_task_network": True, # baseline architecture where meta-task
+    "train_meta": False,
+    "separate_meta_task_network": False, # baseline architecture where meta-task
                                         # weights aren't shared with basic
     "lang_drop_prob": 0.0, # dropout on language processing features
                             # to try to address overfitting
