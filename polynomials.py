@@ -155,6 +155,20 @@ class polynomial_family(object):
         return res 
 
 
+    def poly_to_coeff_vec(self, poly):
+        vec = []
+
+        possible_terms = weird_powerset(self.variables)
+        next(possible_terms)
+
+        for term in ["1"] + list(possible_terms):
+            if term in poly.coefficients:
+                vec.append(poly.coefficients[term])
+            else:
+                vec.append(0.)
+        return np.array([vec])
+
+
     def sample_polynomial(self, coefficient_mean=0, coefficient_sd=2.5,
                           intercept_probability=0.5, term_probability=0.5):
         num_relevant_variables = np.random.randint(len(self.variables) + 1)
@@ -237,6 +251,10 @@ class polynomial(object):
         return self.family.poly_to_symbols(self, strip_spaces=strip_spaces)
 
 
+    def to_coeff_vec(self):
+        return self.family.poly_to_coeff_vec(self)
+
+
 if __name__ == "__main__":
     p_fam = polynomial_family(3, 3)
 
@@ -315,4 +333,6 @@ if __name__ == "__main__":
     print("random samples")
     np.random.seed(0)
     for _ in range(5):
-        print(p_fam.sample_polynomial().to_symbols())
+        this_rand_poly = p_fam.sample_polynomial()
+        print(this_rand_poly.to_symbols())
+        print(this_rand_poly.to_coeff_vec())
