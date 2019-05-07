@@ -68,7 +68,7 @@ config = {
                                    # hyper weights that generate the task
                                    # parameters. 
 
-    "output_dir": "/mnt/fs2/lampinen/polynomials/newest_results/nometa/",
+    "output_dir": "/mnt/fs2/lampinen/polynomials/newest_results/basic_separate_meta/",
     "save_every": 20, 
     "sweep_meta_batch_sizes": [5, 10, 20, 30, 40, 80], # if not None,
                                                    # eval each at
@@ -88,12 +88,14 @@ config = {
                                  # polynomials, how many pairs does the 
                                  # system see?
     "new_meta_tasks": [],
-    "new_meta_mappings": [],#["add_%f" % 2., "add_%f" % -2., "mult_%f" % 2., "mult_%f" % -2.],
+    "new_meta_mappings": ["add_%f" % 2., "add_%f" % -2., "mult_%f" % 2., "mult_%f" % -2.],
     
     "train_language": False, # whether to train language as well (only language
                             # inputs, for now)
     "train_base": True, 
     "train_meta": True,
+    "separate_meta_task_network": True, # baseline architecture where meta-task
+                                        # weights aren't shared with basic
     "lang_drop_prob": 0.0, # dropout on language processing features
                             # to try to address overfitting
 
@@ -104,10 +106,10 @@ config = {
 poly_fam = polynomial_family(config["num_variables"], config["max_degree"])
 config["variables"] = poly_fam.variables
 
-config["base_meta_tasks"] = []#["is_constant_polynomial"] + ["is_intercept_nonzero"] + ["is_%s_relevant" % var for var in config["variables"]]
+config["base_meta_tasks"] = ["is_constant_polynomial"] + ["is_intercept_nonzero"] + ["is_%s_relevant" % var for var in config["variables"]]
 
-config["base_meta_mappings"] = []#["square"] + ["add_%f" % c for c in config["meta_add_vals"]] + ["mult_%f" % c for c in config["meta_mult_vals"]]
-permutation_mappings = []# ["permute_" + "".join([str(x) for x in p]) for p in permutations(range(config["num_variables"]))]
+config["base_meta_mappings"] = ["square"] + ["add_%f" % c for c in config["meta_add_vals"]] + ["mult_%f" % c for c in config["meta_mult_vals"]]
+permutation_mappings = ["permute_" + "".join([str(x) for x in p]) for p in permutations(range(config["num_variables"]))]
 np.random.seed(0)
 np.random.shuffle(permutation_mappings)
 config["base_meta_mappings"] += permutation_mappings[:len(permutation_mappings)//2]
@@ -433,8 +435,10 @@ class meta_model(object):
         self.guess_input_mask_ph = tf.placeholder(tf.bool, shape=[None]) # which datapoints get excluded from the guess
 
         def _meta_network(embedded_inputs, embedded_targets,
-                           mask_ph=self.guess_input_mask_ph, reuse=True):
-            with tf.variable_scope('meta/network', reuse=reuse):
+                          mask_ph=self.guess_input_mask_ph, reuse=True,
+                          subscope=''):
+            this_scope = 'meta/' + subscope + 'network'
+            with tf.variable_scope(this_scope, reuse=reuse):
                 guess_input = tf.concat([embedded_inputs,
                                          embedded_targets], axis=-1)
                 guess_input = tf.boolean_mask(guess_input,
@@ -457,15 +461,31 @@ class meta_model(object):
                 guess_embedding = tf.nn.dropout(guess_embedding, self.keep_prob_ph)
                 return guess_embedding
 
-        self.guess_base_function_emb = _meta_network(processed_input,
-                                                     processed_targets,
-                                                     reuse=False)
 
-        self.guess_meta_t_function_emb = _meta_network(self.meta_input_ph,
-                                                       processed_class)
+        if config["separate_meta_task_network"]:
+            self.guess_base_function_emb = _meta_network(processed_input,
+                                                         processed_targets,
+                                                         reuse=False,
+                                                         subscope="base_tasks/")
 
-        self.guess_meta_m_function_emb = _meta_network(self.meta_input_ph,
-                                                       self.meta_target_ph)
+            self.guess_meta_t_function_emb = _meta_network(self.meta_input_ph,
+                                                           processed_class,
+                                                           reuse=False,
+                                                           subscope="meta_tasks/")
+
+            self.guess_meta_m_function_emb = _meta_network(self.meta_input_ph,
+                                                           self.meta_target_ph,
+                                                           subscope="meta_tasks/")
+        else:
+            self.guess_base_function_emb = _meta_network(processed_input,
+                                                         processed_targets,
+                                                         reuse=False)
+
+            self.guess_meta_t_function_emb = _meta_network(self.meta_input_ph,
+                                                           processed_class)
+            self.guess_meta_m_function_emb = _meta_network(self.meta_input_ph,
+                                                           self.meta_target_ph)
+
 
         # for binary tasks 
         def _combine_inputs(inputs_1, inputs_2, reuse=True):
@@ -560,8 +580,8 @@ class meta_model(object):
         task_weight_gen_init = tf.random_uniform_initializer(-tw_range,
                                                              tw_range)
 
-        def _hyper_network(function_embedding, reuse=True):
-            with tf.variable_scope('hyper', reuse=reuse):
+        def _hyper_network(function_embedding, reuse=True, subscope=''):
+            with tf.variable_scope('hyper' + subscope, reuse=reuse):
                 hyper_hidden = function_embedding
                 for _ in range(config["num_hyper_hidden_layers"]):
                     hyper_hidden = slim.fully_connected(hyper_hidden, num_hidden_hyper,
@@ -602,13 +622,30 @@ class meta_model(object):
                 hidden_biases.append(bfinal)
                 return hidden_weights, hidden_biases
 
-        self.base_task_params = _hyper_network(self.guess_base_function_emb,
-                                               reuse=False)
-        self.base_lang_task_params = _hyper_network(self.language_function_emb)
-        self.meta_t_task_params = _hyper_network(self.guess_meta_t_function_emb)
-        self.meta_m_task_params = _hyper_network(self.guess_meta_m_function_emb)
-        self.meta_bf_task_params = _hyper_network(self.guess_meta_bf_function_emb)
-        self.fed_emb_task_params = _hyper_network(self.feed_embedding_ph)
+        if config["separate_meta_task_network"]:
+            self.base_task_params = _hyper_network(self.guess_base_function_emb,
+                                                   reuse=False, 
+                                                   subscope="/base_tasks")
+            self.base_lang_task_params = _hyper_network(self.language_function_emb, 
+                                                        subscope="base_tasks")
+            self.meta_t_task_params = _hyper_network(self.guess_meta_t_function_emb,
+                                                     reuse=False, 
+                                                     subscope="/meta_tasks")
+            self.meta_m_task_params = _hyper_network(self.guess_meta_m_function_emb, 
+                                                     subscope="/meta_tasks")
+            self.meta_bf_task_params = _hyper_network(self.guess_meta_bf_function_emb, 
+                                                      subscope="/meta_tasks")
+            self.fed_emb_task_params = _hyper_network(self.feed_embedding_ph, 
+                                                      subscope="/base_tasks")
+
+        else:
+            self.base_task_params = _hyper_network(self.guess_base_function_emb,
+                                                   reuse=False)
+            self.base_lang_task_params = _hyper_network(self.language_function_emb)
+            self.meta_t_task_params = _hyper_network(self.guess_meta_t_function_emb)
+            self.meta_m_task_params = _hyper_network(self.guess_meta_m_function_emb)
+            self.meta_bf_task_params = _hyper_network(self.guess_meta_bf_function_emb)
+            self.fed_emb_task_params = _hyper_network(self.feed_embedding_ph)
 
         # task network
         def _task_network(task_params, processed_input):
