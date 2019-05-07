@@ -8,18 +8,12 @@ library(tidyverse)
 ```
 
 ```{r}
-# num_runs = 5
-# results_dir = "../results/newer_results_no_binary/"
-# 
-# result_subdirs = c("basic_smaller")
-# language_result_subdirs = c("language", "untrained_baseline")
-# language_only_subdirs = c("language_only", "conditioned_language_baseline") # missing other losses
 
 num_runs = 5
-results_dir = "../results/newer_results_no_binary/"
+results_dir = "../results/newest_results/"
 
-result_subdirs = c("basic", "basic_md080", "basic_md085")
-language_result_subdirs = c("language", "untrained_baseline")
+result_subdirs = c("basic_ADAM_nobinary_slower", "untrained_baseline")
+language_result_subdirs = c()
 language_only_subdirs = c() # missing other losses
 
 result_subdirs = c(result_subdirs, language_result_subdirs)
@@ -28,12 +22,12 @@ all_result_subdirs = c(result_subdirs, language_only_subdirs)
 language_result_subdirs = c(language_result_subdirs, language_only_subdirs)
 
 name_run_type = function(run_type) { # names for plotting
-  case_when(run_type == "basic_smaller" ~ "Basic (100 tasks)",
-            run_type == "basic" ~ "Basic (no language)",
-            run_type == "language" ~ "Language (full)",
-            run_type == "language_only" ~ "Language + Hyper (no meta)",
-            run_type == "conditioned_language_baseline" ~ "Language + FF",
-            run_type == "untrained_baseline" ~ "Untrained",
+  case_when(drun_type == "basic_ADAM_nobinary_slower" ~ "EML",
+            # run_type == "language" ~ "Language (full)",
+            # run_type == "language_only" ~ "Language + Hyper (no meta)",
+            # run_type == "conditioned_language_baseline" ~ "Language + FF",
+            run_type == "nometa" ~ "EML (no meta tasks)",
+            run_type == "untrained_baseline" ~ "Untrained EML network",
             run_type == "hyper_continual_frozen" ~ "Tuning new task embeddings",
             run_type == "hyper_continual_frozen_untrained_baseline" ~ "... in an untrained network",
             run_type == "hyper_continual_frozen_randomly_initialized_baseline" ~ "... from random embeddings",
@@ -104,7 +98,26 @@ summary_plot = function(data,  x_var, y_var, color_var, optimal_baseline_data=NU
   } else {
     pos_func = position_dodge(width=0.5)
   }
-  p = ggplot(data, aes_string(x=x_var, y=y_var, color=color_var)) +
+  
+  p = ggplot(data %>% 
+               filter(run_type != "untrained_baseline"),
+             aes_string(x=x_var, y=y_var, color=color_var)) +
+    geom_hline(yintercept=0, alpha=0.33)
+  
+  if ("untrained_baseline" %in% unique(data$run_type)) {
+    p = p + 
+      geom_hline(data=data %>% 
+                   filter(run_type == "untrained_baseline") %>% 
+#                   group_by_at(vars(one_of(x_var, color_var))) %>%
+                   group_by_at(vars(one_of(x_var))) %>% 
+                   summarize_at(y_var, mean, na.rm=T),
+#                 aes_string(yintercept=y_var, color=color_var),
+                 aes_string(yintercept=y_var),
+                 linetype=2,
+                 alpha=0.5) 
+  }
+  
+  p = p +
     geom_point(stat="summary", fun.y=mean, size=2,
                position=pos_func) +
     geom_errorbar(stat="summary", 
@@ -112,17 +125,17 @@ summary_plot = function(data,  x_var, y_var, color_var, optimal_baseline_data=NU
                   fun.ymax=function(x) {mean(x) + 1.96*sd(x)/sqrt(length(x))},
                   width=0.4,
                   position=pos_func) +
-    scale_color_manual(values=c("#555093", "#f38f22", "#88e1e1"))
-  
-  if (continuous_x) {
-    p = p + 
-      geom_line(stat="summary", fun.y=mean, size=1.5) 
-  }
+    scale_color_manual(values=c("#555093", "#f38f22", "#88e1e1", "#008822"))
   
   p = p + 
     #scale_color_brewer(palette=palette) +
     labs(x=name_var(x_var), y=name_var(y_var)) +
     guides(color=guide_legend(title=NULL))
+  
+  if (continuous_x) {
+    p = p +
+      geom_line(alpha=0.5)
+  }
     
   if (!is.null(optimal_baseline_data)) {
     # TODO (maybe)
@@ -141,6 +154,16 @@ config_d = load_d(results_dir, all_result_subdirs, num_runs, "config")
 ```
 
 ```{r}
+check_if_base_task = function(run_num, run_type, task_name) {
+  base_task_names = config_d %>%
+    filter(run == run_num, run_type == run_type) %>%
+    pull(base_task_names) %>%
+    unlist()
+  return(task_name %in% base_task_names)
+}
+```
+
+```{r}
 check_if_new_task = function(run_num, run_type, task_name) {
   new_task_names = config_d %>%
     filter(run == run_num, run_type == run_type) %>%
@@ -155,15 +178,6 @@ N.B. that because the new and old tasks are sampled independently, there are occ
 # meta-learning tests
 
 ```{r}
-# original_base_d = load_d(results_dir, result_subdirs, num_runs, "losses") %>% 
-#   filter(epoch == 0) %>%
-#   select(epoch, run, named_run_type, run_type,
-#          matches("\\d\\.\\d\\d")) %>% # all base tasks have at least one coefficient
-#   gather(polynomial, loss, -epoch, -contains("run")) %>%
-#   mutate(is_new=F, learned="Before training")
-```
-
-```{r}
 base_d = load_d(results_dir, result_subdirs, num_runs, "new_losses") %>% 
   filter(epoch == 0) %>%
   select(epoch, run, named_run_type, run_type,
@@ -174,33 +188,46 @@ base_d = load_d(results_dir, result_subdirs, num_runs, "new_losses") %>%
 ```{r}
 base_d = base_d %>%
   rowwise() %>%
-  mutate(is_new = check_if_new_task(run, run_type, polynomial)) %>%
+  mutate(is_new = check_if_new_task(run, run_type, polynomial),
+         is_base = check_if_base_task(run, run_type, polynomial)) %>%
   ungroup() %>%
-  mutate(learned="After training")
-```
-
-```{r}
-#base_d = bind_rows(original_base_d, base_d)
+  filter(is_new | is_base) %>% # don't eval implied (although results are similar) because distribution is skewed
+  mutate(learned="After training",
+         is_new = factor(is_new, labels=c("Trained", "Held out")))
 ```
 
 ```{r}
 summary_plot(base_d,
              "named_run_type", "loss", "is_new") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+
+```{r}
+summary_plot(base_d %>%
+               filter(run_type %in% c("untrained_baseline", "basic_ADAM_nobinary_slower")),
+             "named_run_type", "loss", "is_new") +
   geom_hline(yintercept=0)
-  
+ggsave("../../meta_RL/writing/figures/poly/basic_results.png", width=4.2, height=3)
 ```
 
 
 # meta task learning
 
-```{r}
-# original_meta_d = load_d(results_dir, result_subdirs, num_runs, "meta_true_losses") %>% 
-#   filter(epoch == 0) 
-```
 
 ```{r}
 meta_d = load_d(results_dir, result_subdirs, num_runs, "new_meta_true_losses") %>% 
   filter(epoch == 0) 
+```
+
+```{r}
+check_if_new_meta_mapping = function(run_num, run_type, meta_task) {
+  new_meta_mapping_names = config_d %>%
+    filter(run == run_num, run_type == run_type) %>%
+    pull(new_meta_mappings) %>%
+    unlist()
+  return(meta_task %in% new_meta_mapping_names)
+}
 ```
 
 ```{r}
@@ -209,10 +236,15 @@ process_meta_d = function(meta_d) {
     gather(meta_task, loss, -epoch, -contains("run"), na.rm=T) %>% 
     separate(meta_task, c("meta_task", "source", "target"), sep=":|->") %>%
     rowwise() %>%
-    mutate(source_is_new = check_if_new_task(run, run_type, source),
-           target_is_new = check_if_new_task(run, run_type, target)) %>%
+    mutate(is_new_argument = check_if_new_task(run, run_type, source),
+           is_new_target = check_if_new_task(run, run_type, target),
+           is_new_meta_mapping = check_if_new_meta_mapping(run, run_type, meta_task)) %>%
     ungroup() %>%
-    mutate(is_new = source_is_new | target_is_new)
+    mutate(result_type=case_when(!is_new_argument & !is_new_meta_mapping ~ "Trained mapping, trained task",
+                          is_new_argument & !is_new_meta_mapping ~ "Trained mapping, held-out task",
+                          !is_new_argument & is_new_meta_mapping ~ "Held-out mapping, trained task",
+                          is_new_argument & is_new_meta_mapping ~ "Held-out mapping, held-out task"),
+           result_type = factor(result_type, levels = c('Trained mapping, trained task', 'Trained mapping, held-out task', 'Held-out mapping, trained task', 'Held-out mapping, held-out task')))
   return(meta_d)
 }
 ```
@@ -223,24 +255,29 @@ meta_d = process_meta_d(meta_d) %>%
 ```
 
 ```{r}
-# original_meta_d = process_meta_d(original_meta_d) %>%
-#   mutate(learned="Before training")
-```
-
-```{r}
-# meta_d = bind_rows(original_meta_d, meta_d)
+summary_plot(meta_d %>%
+               filter(!(run_type %in% c("basic_more", "language"))),
+             "named_run_type", "loss", "result_type") +
+  ylim(0, NA) +
+  labs(y="Performance after meta-mapping") +
+  geom_hline(yintercept=0) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
 ```
 
 ```{r}
 summary_plot(meta_d %>%
-               filter(run_type == "untrained_baseline"),
-             "named_run_type", "loss", "is_new") +
-  ylim(0, NA)
+               filter(run_type %in% c("untrained_baseline", "basic_ADAM_nobinary_slower", "language_ADAM")),
+             "named_run_type", "loss", "result_type") +
+  ylim(0, NA) +
+  labs(y="Performance after meta-mapping") +
+  geom_hline(yintercept=0)
+ggsave("../../meta_RL/writing/figures/poly/meta_results.png", width=6, height=3)
 ```
 
 ```{r}
 summary_plot(meta_d %>%
-               filter(grepl("binary", meta_task)),
+               filter(run_type != "basic",
+                      grepl("binary", meta_task)),
              "named_run_type", "loss", "is_new") +
   ylim(0, NA) +
   facet_wrap(~meta_task)
@@ -278,7 +315,8 @@ lang_d = lang_d %>%
 ```
 
 ```{r}
-summary_plot(lang_d,
+summary_plot(lang_d %>%
+               filter(run_type != "language"),
              "named_run_type", "loss", "is_new") 
   
 ```
@@ -288,26 +326,63 @@ summary_plot(lang_d %>%
                filter(is_new,
                       grepl("X", polynomial)), # nonconstant
              "learned", "loss", "is_new") +
-  facet_grid(named_run_type ~ polynomial) 
+  facet_grid(named_run_type ~ .) 
   
 ```
 
+## comparing architectures
+
 ```{r}
-summary_plot(lang_d %>%
-               filter(grepl("X", polynomial)), # nonconstant
+num_runs_arch_comp = 5
+results_dir_arch_comp = "../results/new_results/"
+
+language_result_subdirs_arch_comp = c("untrained_baseline")
+language_only_subdirs_arch_comp = c("language_only", "conditioned_language_baseline") # missing other losses
+
+language_result_subdirs_arch_comp = c(language_result_subdirs_arch_comp, language_only_subdirs_arch_comp)
+```
+
+```{r}
+lang_arch_comp_d = load_d(results_dir_arch_comp, language_result_subdirs_arch_comp, num_runs_arch_comp, "new_language_losses") %>% 
+  select(epoch, run, named_run_type, run_type,
+         matches("\\d\\.\\d\\d"), -matches("add|permute|mult|square")) %>% # all base tasks have at least one coefficient
+  gather(polynomial, loss, -epoch, -contains("run"))
+```
+
+```{r}
+arch_comp_config_d = load_d(results_dir_arch_comp, language_result_subdirs_arch_comp, num_runs_arch_comp, "config")
+
+check_if_new_task_arch_comp = function(run_num, run_type, task_name) {
+  new_task_names = arch_comp_config_d %>%
+    filter(run == run_num, run_type == run_type) %>%
+    pull(new_task_names) %>%
+    unlist()
+  return(task_name %in% new_task_names)
+}
+```
+
+```{r}
+lang_arch_comp_d = lang_arch_comp_d %>%
+  rowwise() %>%
+  mutate(is_new = check_if_new_task_arch_comp(run, run_type, polynomial)) %>%
+  ungroup() %>%
+  mutate(learned="After training")
+```
+
+```{r}
+summary_plot(lang_arch_comp_d %>%
+               filter(epoch == 0, run <= 3), # nonconstant
              "learned", "loss", "is_new") +
   facet_wrap(. ~ named_run_type) 
-  
 ```
 
 ```{r}
-lang_d %>% 
-  filter(is_new) %>% 
-  group_by(named_run_type) %>% 
-  summarize(mean_loss=mean(loss))
+summary_plot(lang_arch_comp_d %>%
+               filter(run <= 3,
+                      is_new), # nonconstant
+             "epoch", "loss", "named_run_type",
+             continuous_x=T)  
 ```
-
-
 
 # continual learning 
 Note: the code for running these experiments is in the continual_learning branch, but the analysis code is here to facilitate generating unified figures for the paper.
