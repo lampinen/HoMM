@@ -515,8 +515,13 @@ class meta_model(object):
                                                     self.meta_input_2_ph,
                                                     reuse=False)
 
-        self.guess_meta_bf_function_emb = _meta_network(
-            self.combined_meta_inputs, self.meta_target_ph)
+        if config["separate_meta_task_network"]:
+            self.guess_meta_bf_function_emb = _meta_network(
+                self.combined_meta_inputs, self.meta_target_ph,
+                subscope="meta_tasks/")
+        else:
+            self.guess_meta_bf_function_emb = _meta_network(
+                self.combined_meta_inputs, self.meta_target_ph)
     
 #        print(self.combined_meta_inputs)
 #        print(self.guess_base_function_emb)
@@ -627,7 +632,7 @@ class meta_model(object):
                                                    reuse=False, 
                                                    subscope="/base_tasks")
             self.base_lang_task_params = _hyper_network(self.language_function_emb, 
-                                                        subscope="base_tasks")
+                                                        subscope="/base_tasks")
             self.meta_t_task_params = _hyper_network(self.guess_meta_t_function_emb,
                                                      reuse=False, 
                                                      subscope="/meta_tasks")
