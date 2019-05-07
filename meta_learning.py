@@ -35,13 +35,13 @@ config = {
     "max_sentence_len": 20, # Any longer than this will not be trained
     "optimizer": "Adam",
 
-    "init_learning_rate": 1e-4,
-    "init_language_learning_rate": 1e-4,
-    "init_meta_learning_rate": 3e-5,
+    "init_learning_rate": 3e-5,
+    "init_language_learning_rate": 3e-5,
+    "init_meta_learning_rate": 1e-5,
 
-    "new_init_learning_rate": 1e-5,
-    "new_init_language_learning_rate": 1e-5,
-    "new_init_meta_learning_rate": 1e-5,
+    "new_init_learning_rate": 1e-6,
+    "new_init_language_learning_rate": 1e-6,
+    "new_init_meta_learning_rate": 1e-6,
 
     "lr_decay": 0.85,
     "language_lr_decay": 0.8,
@@ -68,7 +68,7 @@ config = {
                                    # hyper weights that generate the task
                                    # parameters. 
 
-    "output_dir": "/mnt/fs2/lampinen/polynomials/newest_results/basic_ADAM_nobinary/",
+    "output_dir": "/mnt/fs2/lampinen/polynomials/newest_results/nometa/",
     "save_every": 20, 
     "sweep_meta_batch_sizes": [5, 10, 20, 30, 40, 80], # if not None,
                                                    # eval each at
@@ -88,7 +88,7 @@ config = {
                                  # polynomials, how many pairs does the 
                                  # system see?
     "new_meta_tasks": [],
-    "new_meta_mappings": ["add_%f" % 2., "add_%f" % -2., "mult_%f" % 2., "mult_%f" % -2.],
+    "new_meta_mappings": [],#["add_%f" % 2., "add_%f" % -2., "mult_%f" % 2., "mult_%f" % -2.],
     
     "train_language": False, # whether to train language as well (only language
                             # inputs, for now)
@@ -104,10 +104,10 @@ config = {
 poly_fam = polynomial_family(config["num_variables"], config["max_degree"])
 config["variables"] = poly_fam.variables
 
-config["base_meta_tasks"] = ["is_constant_polynomial"] + ["is_intercept_nonzero"] + ["is_%s_relevant" % var for var in config["variables"]]
+config["base_meta_tasks"] = []#["is_constant_polynomial"] + ["is_intercept_nonzero"] + ["is_%s_relevant" % var for var in config["variables"]]
 
-config["base_meta_mappings"] = ["square"] + ["add_%f" % c for c in config["meta_add_vals"]] + ["mult_%f" % c for c in config["meta_mult_vals"]]
-permutation_mappings = ["permute_" + "".join([str(x) for x in p]) for p in permutations(range(config["num_variables"]))]
+config["base_meta_mappings"] = []#["square"] + ["add_%f" % c for c in config["meta_add_vals"]] + ["mult_%f" % c for c in config["meta_mult_vals"]]
+permutation_mappings = []# ["permute_" + "".join([str(x) for x in p]) for p in permutations(range(config["num_variables"]))]
 np.random.seed(0)
 np.random.shuffle(permutation_mappings)
 config["base_meta_mappings"] += permutation_mappings[:len(permutation_mappings)//2]
