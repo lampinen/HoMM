@@ -22,7 +22,7 @@ all_result_subdirs = c(result_subdirs, language_only_subdirs)
 language_result_subdirs = c(language_result_subdirs, language_only_subdirs)
 
 name_run_type = function(run_type) { # names for plotting
-  case_when(drun_type == "basic_ADAM_nobinary_slower" ~ "EML",
+  case_when(run_type == "basic_ADAM_nobinary_slower" ~ "EML",
             # run_type == "language" ~ "Language (full)",
             # run_type == "language_only" ~ "Language + Hyper (no meta)",
             # run_type == "conditioned_language_baseline" ~ "Language + FF",
@@ -94,7 +94,7 @@ name_var = function(var) { # var names for plotting
 
 summary_plot = function(data,  x_var, y_var, color_var, optimal_baseline_data=NULL, other_baseline_data=NULL, palette="Set2", continuous_x=F) {
   if(x_var == color_var) {
-    pos_func=NULL
+    pos_func=position_identity()
   } else {
     pos_func = position_dodge(width=0.5)
   }
@@ -109,9 +109,7 @@ summary_plot = function(data,  x_var, y_var, color_var, optimal_baseline_data=NU
       geom_hline(data=data %>% 
                    filter(run_type == "untrained_baseline") %>% 
 #                   group_by_at(vars(one_of(x_var, color_var))) %>%
-                   group_by_at(vars(one_of(x_var))) %>% 
                    summarize_at(y_var, mean, na.rm=T),
-#                 aes_string(yintercept=y_var, color=color_var),
                  aes_string(yintercept=y_var),
                  linetype=2,
                  alpha=0.5) 
@@ -207,7 +205,7 @@ summary_plot(base_d,
 summary_plot(base_d %>%
                filter(run_type %in% c("untrained_baseline", "basic_ADAM_nobinary_slower")),
              "named_run_type", "loss", "is_new") +
-  geom_hline(yintercept=0)
+  geom_hline(yintercept=0) 
 ggsave("../../meta_RL/writing/figures/poly/basic_results.png", width=4.2, height=3)
 ```
 
@@ -266,7 +264,7 @@ summary_plot(meta_d %>%
 
 ```{r}
 summary_plot(meta_d %>%
-               filter(run_type %in% c("untrained_baseline", "basic_ADAM_nobinary_slower", "language_ADAM")),
+               filter(run_type %in% c("untrained_baseline", "basic_ADAM_nobinary_slower")),
              "named_run_type", "loss", "result_type") +
   ylim(0, NA) +
   labs(y="Performance after meta-mapping") +
