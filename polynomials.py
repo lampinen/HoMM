@@ -162,6 +162,8 @@ class polynomial_family(object):
         next(possible_terms)
 
         for term in ["1"] + list(possible_terms):
+            if len(term) > self.max_degree:
+                break
             if term in poly.coefficients:
                 vec.append(poly.coefficients[term])
             else:
