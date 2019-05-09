@@ -52,10 +52,10 @@ config = {
     "min_language_learning_rate": 3e-8,
     "min_meta_learning_rate": 1e-7,
 
-    "refresh_meta_cache_every": 1, # how many epochs between updates to meta_cache
+    "refresh_meta_cache_every": 10000, # how many epochs between updates to meta_cache
     "refresh_mem_buffs_every": 50, # how many epochs between updates to buffers
 
-    "max_base_epochs": 8000,
+    "max_base_epochs": 4000,
     "max_new_epochs": 100,
     "num_task_hidden_layers": 3,
     "num_hyper_hidden_layers": 3,
@@ -68,7 +68,7 @@ config = {
                                    # hyper weights that generate the task
                                    # parameters. 
 
-    "output_dir": "/mnt/fs2/lampinen/polynomials/newest_results/nometa/",
+    "output_dir": "/mnt/fs2/lampinen/polynomials/newest_results/nometa_fastrun/",
     "save_every": 20, 
     "sweep_meta_batch_sizes": [5, 10, 20, 30, 40, 80], # if not None,
                                                    # eval each at
