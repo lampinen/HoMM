@@ -12,9 +12,10 @@ library(tidyverse)
 num_runs = 5
 results_dir = "../results/newest_results/"
 
-result_subdirs = c("basic_ADAM_nobinary_slower", "untrained_baseline")
-language_result_subdirs = c()
-language_only_subdirs = c() # missing other losses
+result_subdirs = c("basic_ADAM_nobinary_slower", "untrained_baseline", "nometa_fastrun")
+language_result_subdirs = c("language_meta_only")
+language_only_subdirs = c("language_coeff_only") # missing other losses
+
 
 result_subdirs = c(result_subdirs, language_result_subdirs)
 
@@ -26,7 +27,7 @@ name_run_type = function(run_type) { # names for plotting
             # run_type == "language" ~ "Language (full)",
             # run_type == "language_only" ~ "Language + Hyper (no meta)",
             # run_type == "conditioned_language_baseline" ~ "Language + FF",
-            run_type == "nometa" ~ "EML (no meta tasks)",
+            run_type == "nometa_fastrun" ~ "EML (no meta tasks)",
             run_type == "untrained_baseline" ~ "Untrained EML network",
             run_type == "hyper_continual_frozen" ~ "Tuning new task embeddings",
             run_type == "hyper_continual_frozen_untrained_baseline" ~ "... in an untrained network",
@@ -89,6 +90,7 @@ theme_set(theme_bw() +
 name_var = function(var) { # var names for plotting
   case_when(var %in% c("is_new", "is_new_polynomial") ~ "Held out?",
             var %in% c("run_type", "named_run_type") ~ "Run type",
+            var == "result_type" ~ "Hold-out type",
             T ~ var)
   }
 
@@ -264,12 +266,14 @@ summary_plot(meta_d %>%
 
 ```{r}
 summary_plot(meta_d %>%
-               filter(run_type %in% c("untrained_baseline", "basic_ADAM_nobinary_slower")),
-             "named_run_type", "loss", "result_type") +
+               filter(run_type %in% c("untrained_baseline", "basic_ADAM_nobinary_slower"),
+                      !grepl("binary", meta_task)),
+             "result_type", "loss", "result_type") +
   ylim(0, NA) +
   labs(y="Performance after meta-mapping") +
-  geom_hline(yintercept=0)
-ggsave("../../meta_RL/writing/figures/poly/meta_results.png", width=6, height=3)
+  scale_y_continuous(breaks=seq(0, 12, 3)) +
+  scale_x_discrete(labels = function(x) {str_wrap(x, width=20)})
+ggsave("../../meta_RL/writing/figures/poly/meta_results.png", width=4.2, height=3)
 ```
 
 ```{r}
@@ -326,6 +330,37 @@ summary_plot(lang_d %>%
              "learned", "loss", "is_new") +
   facet_grid(named_run_type ~ .) 
   
+```
+
+## language meta tests
+
+
+```{r}
+lang_meta_d = load_d(results_dir, result_subdirs, num_runs, "newlang_meta_true_losses") %>% 
+  filter(epoch == 0) 
+```
+
+```{r}
+lang_meta_d = process_meta_d(lang_meta_d) %>%
+  mutate(learned="After training")
+```
+
+add baseline data
+```{r}
+lang_meta_d = bind_rows(lang_meta_d,
+                        meta_d %>%
+                          filter(run_type == "untrained_baseline",
+                                 !grepl("binary", meta_task)))
+```
+
+```{r}
+summary_plot(lang_meta_d,
+             "result_type", "loss", "result_type") +
+  ylim(0, NA) +
+  labs(y="Performance after meta-mapping") +
+  scale_y_continuous(breaks=seq(0, 12, 3)) +
+  scale_x_discrete(labels = function(x) {str_wrap(x, width=20)})
+ggsave("../../meta_RL/writing/figures/poly/language_meta_results.png", width=4.2, height=3)
 ```
 
 ## comparing architectures
