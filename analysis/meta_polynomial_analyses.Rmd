@@ -240,11 +240,11 @@ process_meta_d = function(meta_d) {
            is_new_target = check_if_new_task(run, run_type, target),
            is_new_meta_mapping = check_if_new_meta_mapping(run, run_type, meta_task)) %>%
     ungroup() %>%
-    mutate(result_type=case_when(!is_new_argument & !is_new_meta_mapping ~ "Trained mapping, trained task",
-                          is_new_argument & !is_new_meta_mapping ~ "Trained mapping, held-out task",
-                          !is_new_argument & is_new_meta_mapping ~ "Held-out mapping, trained task",
-                          is_new_argument & is_new_meta_mapping ~ "Held-out mapping, held-out task"),
-           result_type = factor(result_type, levels = c('Trained mapping, trained task', 'Trained mapping, held-out task', 'Held-out mapping, trained task', 'Held-out mapping, held-out task')))
+    mutate(result_type=case_when(!is_new_argument & !is_new_meta_mapping ~ "Trained mapping, on trained task",
+                          is_new_argument & !is_new_meta_mapping ~ "Trained mapping, on held-out task",
+                          !is_new_argument & is_new_meta_mapping ~ "Held-out mapping, on trained task",
+                          is_new_argument & is_new_meta_mapping ~ "Held-out mapping, on held-out task"),
+           result_type = factor(result_type, levels = c('Trained mapping, on trained task', 'Trained mapping, on held-out task', 'Held-out mapping, on trained task', 'Held-out mapping, on held-out task')))
   return(meta_d)
 }
 ```
@@ -272,7 +272,9 @@ summary_plot(meta_d %>%
   ylim(0, NA) +
   labs(y="Performance after meta-mapping") +
   scale_y_continuous(breaks=seq(0, 12, 3)) +
-  scale_x_discrete(labels = function(x) {str_wrap(x, width=20)})
+  scale_x_discrete(labels = function(x) {str_wrap(x, width=18)})+
+  guides(color=F) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
 ggsave("../../meta_RL/writing/figures/poly/meta_results.png", width=4.2, height=3)
 ```
 
@@ -357,9 +359,11 @@ lang_meta_d = bind_rows(lang_meta_d,
 summary_plot(lang_meta_d,
              "result_type", "loss", "result_type") +
   ylim(0, NA) +
-  labs(y="Performance after meta-mapping") +
+  labs(y="Loss on target task") +
   scale_y_continuous(breaks=seq(0, 12, 3)) +
-  scale_x_discrete(labels = function(x) {str_wrap(x, width=20)})
+  scale_x_discrete(labels = function(x) {str_wrap(x, width=18)}) +
+  guides(color=F) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
 ggsave("../../meta_RL/writing/figures/poly/language_meta_results.png", width=4.2, height=3)
 ```
 
