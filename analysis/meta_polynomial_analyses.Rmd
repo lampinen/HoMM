@@ -5,6 +5,7 @@ output: html_notebook
 
 ```{r}
 library(tidyverse)
+library(stargazer)
 ```
 
 ```{r}
@@ -95,7 +96,7 @@ name_var = function(var) { # var names for plotting
   }
 
 summary_plot = function(data,  x_var, y_var, color_var, optimal_baseline_data=NULL, other_baseline_data=NULL, palette="Set2", continuous_x=F) {
-  if(x_var == color_var) {
+  if(x_var == color_var | continuous_x) {
     pos_func=position_identity()
   } else {
     pos_func = position_dodge(width=0.5)
@@ -134,7 +135,8 @@ summary_plot = function(data,  x_var, y_var, color_var, optimal_baseline_data=NU
   
   if (continuous_x) {
     p = p +
-      geom_line(alpha=0.5)
+      geom_line(stat="summary", fun.y=mean, size=2, 
+                alpha=0.5, position=pos_func)
   }
     
   if (!is.null(optimal_baseline_data)) {
@@ -179,7 +181,6 @@ N.B. that because the new and old tasks are sampled independently, there are occ
 
 ```{r}
 base_d = load_d(results_dir, result_subdirs, num_runs, "new_losses") %>% 
-  filter(epoch == 0) %>%
   select(epoch, run, named_run_type, run_type,
          matches("\\d\\.\\d\\d"), -matches("add|permute|mult|square")) %>% # all base tasks have at least one coefficient
   gather(polynomial, loss, -epoch, -contains("run"))
@@ -197,7 +198,8 @@ base_d = base_d %>%
 ```
 
 ```{r}
-summary_plot(base_d,
+summary_plot(base_d %>% 
+               filter(epoch == 0),
              "named_run_type", "loss", "is_new") +
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
 ```
@@ -205,12 +207,31 @@ summary_plot(base_d,
 
 ```{r}
 summary_plot(base_d %>%
-               filter(run_type %in% c("untrained_baseline", "basic_ADAM_nobinary_slower")),
-             "named_run_type", "loss", "is_new") +
-  geom_hline(yintercept=0) 
+               filter(epoch == 0,
+                      run_type %in% c("untrained_baseline", "basic_ADAM_nobinary_slower")),
+             "is_new", "loss", "is_new") 
 ggsave("../../meta_RL/writing/figures/poly/basic_results.png", width=4.2, height=3)
 ```
+```{r}
+base_d %>%
+  filter(epoch == 0,
+         run_type %in% c("untrained_baseline", "basic_ADAM_nobinary_slower")) %>%
+  group_by(named_run_type, is_new) %>%
+  do(data.frame(mean_cl_boot(.$loss))) %>%
+  rename(mean_loss=y, boot_CI_low=ymin, boot_CI_high=ymax) %>%
+  ungroup() %>%
+  mutate(is_new=as.character(is_new)) %>%
+  mutate_at(vars(mean_loss, contains("CI")), function(x) {round(x, digits=3)}) %>%
+  stargazer(summary = F, rownames = F, digits=2)
+```
 
+```{r}
+summary_plot(base_d %>%
+               filter(run_type %in% c("basic_ADAM_nobinary_slower")),
+             "epoch", "loss", "is_new",
+             continuous_x = T) 
+ggsave("../../meta_RL/writing/figures/poly/basic_results_over_time.png", width=4.2, height=3)
+```
 
 # meta task learning
 
@@ -270,7 +291,7 @@ summary_plot(meta_d %>%
                       !grepl("binary", meta_task)),
              "result_type", "loss", "result_type") +
   ylim(0, NA) +
-  labs(y="Performance after meta-mapping") +
+  labs(y="Loss on target task") +
   scale_y_continuous(breaks=seq(0, 12, 3)) +
   scale_x_discrete(labels = function(x) {str_wrap(x, width=18)})+
   guides(color=F) +
