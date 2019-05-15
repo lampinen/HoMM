@@ -19,7 +19,7 @@ from orthogonal_matrices import random_orthogonal
 
 config = {
     "run_offset": 0,
-    "num_runs": 5,
+    "num_runs": 3,
 
     "num_variables": 4,
     "max_degree": 2,
@@ -39,9 +39,9 @@ config = {
     "init_language_learning_rate": 3e-5,
     "init_meta_learning_rate": 1e-5,
 
-    "new_init_learning_rate": 1e-6,
-    "new_init_language_learning_rate": 1e-6,
-    "new_init_meta_learning_rate": 1e-6,
+    "new_init_learning_rate": 1e-7,
+    "new_init_language_learning_rate": 1e-7,
+    "new_init_meta_learning_rate": 1e-7,
 
     "lr_decay": 0.85,
     "language_lr_decay": 0.8,
@@ -68,7 +68,11 @@ config = {
                                    # hyper weights that generate the task
                                    # parameters. 
 
-    "output_dir": "/mnt/fs2/lampinen/polynomials/newest_results/nometa_fastrun/",
+
+    # if a restore checkpoint path is provided, will restore from it instead of
+    # running the initial training phase
+    "restore_checkpoint_path": "/mnt/fs2/lampinen/polynomials/newest_results/basic_ADAM_nobinary_slower/", 
+    "output_dir": "/mnt/fs4/lampinen/polynomials/newest_results/slower_integration/",
     "save_every": 20, 
     "sweep_meta_batch_sizes": [5, 10, 20, 30, 40, 80], # if not None,
                                                    # eval each at
@@ -1160,6 +1164,10 @@ class meta_model(object):
         self.saver.save(self.sess, filename)
 
 
+    def restore_parameters(self, filename):
+        self.saver.restore(self.sess, filename)
+
+
     def run_training(self, filename_prefix, num_epochs, include_new=False):
         """Train model on base and meta tasks, if include_new include also
         the new ones."""
@@ -1340,9 +1348,12 @@ for run_i in range(config["run_offset"], config["run_offset"]+config["num_runs"]
     model = meta_model(config)
 #    model.save_embeddings(filename=filename_prefix + "_init_embeddings.csv",
 #                          include_new=False)
-    model.run_training(filename_prefix=filename_prefix,
-                       num_epochs=config["max_base_epochs"],
-                       include_new=False)
+    if config["restore_checkpoint_path"] is not None:
+        model.restore_parameters(config["restore_checkpoint_path"] + "run%i" % run_i + "_guess_checkpoint")
+    else:
+        model.run_training(filename_prefix=filename_prefix,
+                           num_epochs=config["max_base_epochs"],
+                           include_new=False)
 #    cProfile.run('model.run_training(filename_prefix=filename_prefix, num_epochs=config["max_base_epochs"], include_new=False)')
 
     model.save_parameters(filename_prefix + "_guess_checkpoint")
