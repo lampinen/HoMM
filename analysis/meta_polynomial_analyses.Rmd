@@ -307,6 +307,19 @@ ggsave("../../meta_RL/writing/figures/poly/meta_results.png", width=4.2, height=
 ```
 
 ```{r}
+meta_d %>%
+  filter(epoch == 0,
+         run_type %in% c("untrained_baseline", "basic_ADAM_nobinary_slower")) %>%
+  group_by(named_run_type, result_type) %>%
+  do(data.frame(mean_cl_boot(.$loss))) %>%
+  rename(mean_loss=y, boot_CI_low=ymin, boot_CI_high=ymax) %>%
+  ungroup() %>%
+  mutate(result_type=as.character(result_type)) %>%
+  mutate_at(vars(mean_loss, contains("CI")), function(x) {round(x, digits=3)}) %>%
+  stargazer(summary = F, rownames = F, digits=2)
+```
+
+```{r}
 summary_plot(meta_d %>%
                filter(run_type != "basic",
                       grepl("binary", meta_task)),
@@ -396,6 +409,18 @@ summary_plot(lang_meta_d %>%
 ggsave("../../meta_RL/writing/figures/poly/language_meta_results.png", width=4.2, height=3)
 ```
 
+```{r}
+lang_meta_d %>%
+  filter(epoch == 0,
+         run_type %in% c("untrained_baseline", "language_meta_only")) %>%
+  group_by(named_run_type, result_type) %>%
+  do(data.frame(mean_cl_boot(.$loss))) %>%
+  rename(mean_loss=y, boot_CI_low=ymin, boot_CI_high=ymax) %>%
+  ungroup() %>%
+  mutate(result_type=as.character(result_type)) %>%
+  mutate_at(vars(mean_loss, contains("CI")), function(x) {round(x, digits=3)}) %>%
+  stargazer(summary = F, rownames = F, digits=2)
+```
 ```{r}
 summary_plot(lang_meta_d,
              "named_run_type", "loss", "result_type") +
