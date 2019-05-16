@@ -95,6 +95,7 @@ name_var = function(var) { # var names for plotting
             var %in% c("run_type", "named_run_type") ~ "Run type",
             var == "loss" ~ "Average loss",
             var == "result_type" ~ "Hold-out type",
+            var == "meta_batch_size" ~ "Meta-network sample size"
             T ~ var)
   }
 
@@ -239,6 +240,42 @@ summary_plot(base_d %>%
 ggsave("../../meta_RL/writing/figures/poly/basic_results_over_time.png", width=4.2, height=3)
 ```
 
+# sweeping
+
+
+```{r}
+sweep_d = load_d(results_dir, c("basic_ADAM_nobinary_slower", "untrained_baseline"), num_runs, "new_sweep_losses") %>% 
+  rename(meta_batch_size=size) %>%
+  filter(epoch == 0) %>%
+  select(epoch, run, named_run_type, meta_batch_size, run_type,
+         matches("\\d\\.\\d\\d"), -matches("add|permute|mult|square")) %>% # all base tasks have at least one coefficient
+  gather(polynomial, loss, -epoch, -meta_batch_size, -contains("run"))
+```
+
+```{r}
+sweep_d = sweep_d %>%
+   rowwise() %>%
+   mutate(is_new = check_if_new_task(run, run_type, polynomial),
+          is_base = check_if_base_task(run, run_type, polynomial)) %>%
+
+  ungroup() %>%
+  filter(is_new | is_base) %>% # don't eval implied (although results are similar) because distribution is skewed
+  mutate(learned="After training",
+         is_new = factor(is_new, labels=c("Trained", "Held out")))
+```
+
+```{r}
+summary_plot(sweep_d %>% 
+               filter(meta_batch_size <= 40),
+             "meta_batch_size", "loss", "is_new",
+             continuous_x = T) +
+  scale_x_continuous(breaks=c(unique(sweep_d$meta_batch_size), 15)) +
+  geom_vline(xintercept=15, alpha=0.5) +
+  annotate("text", x=17, y=3, alpha=0.5, angle=90, label=str_wrap("Minimum necessary for perfect performance", width=25))
+
+ggsave("../../meta_RL/writing/figures/poly/basic_results_sweeping.png", width=6, height=3)
+```
+
 # meta task learning
 
 
@@ -283,13 +320,13 @@ meta_d = process_meta_d(meta_d) %>%
 
 ```{r}
 summary_plot(meta_d %>%
-               filter(run_type %in% c("language_meta_only", "language_conditioned_meta_only")),
              "named_run_type", "loss", "result_type") +
+               filter(run_type %in% c("language_meta_only", "language_conditioned_meta_only")),
   ylim(0, NA) +
   labs(y="Performance after meta-mapping") +
   geom_hline(yintercept=0) +
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
-ggsave("../../meta_RL/writing/figures/poly/meta_results_conditioned_vs_hyper.png", width=4.2, height=3)
+ggsave("../../meta_RL/writing/figures/poly/meta_results_conditioned_vs_hyper.png", width=6, height=3)
 ```
 
 ```{r}
