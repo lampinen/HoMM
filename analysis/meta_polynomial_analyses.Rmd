@@ -271,7 +271,8 @@ summary_plot(sweep_d %>%
              continuous_x = T) +
   scale_x_continuous(breaks=c(unique(sweep_d$meta_batch_size), 15)) +
   geom_vline(xintercept=15, alpha=0.5) +
-  annotate("text", x=17, y=3, alpha=0.5, angle=90, label=str_wrap("Minimum necessary for perfect performance", width=25))
+  annotate("text", x=17, y=3, alpha=0.5, angle=90, label=str_wrap("Minimum necessary for perfect performance", width=25)) +
+  labs(x="Number of points provided to meta-network")
 
 ggsave("../../meta_RL/writing/figures/poly/basic_results_sweeping.png", width=6, height=3)
 ```
@@ -319,9 +320,9 @@ meta_d = process_meta_d(meta_d) %>%
 ```
 
 ```{r}
-summary_plot(meta_d %>%
+summary_plot(meta_d %>% 
+               filter(run_type %in% c("language_meta_only", "language_conditioned_meta_only", "untrained_baseline")),
              "named_run_type", "loss", "result_type") +
-               filter(run_type %in% c("language_meta_only", "language_conditioned_meta_only")),
   ylim(0, NA) +
   labs(y="Performance after meta-mapping") +
   geom_hline(yintercept=0) +
