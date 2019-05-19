@@ -247,6 +247,41 @@ summary_plot(base_d %>%
                       run_type %in% c("basic_separate_meta", "basic_ADAM_nobinary_slower", "nometa_fastrun")),
              "named_run_type", "loss", "is_new") 
 ```
+## learning curves
+
+```{r}
+base_learning_d = load_d(results_dir, c("basic_ADAM_nobinary_slower", "basic_separate_meta", "nometa_fastrun"), num_runs, "losses") %>% 
+  filter(epoch %% 200 == 0) %>%
+  select(epoch, run, named_run_type, run_type,
+         matches("\\d\\.\\d\\d"), -matches("add|permute|mult|square")) %>% # all base tasks have at least one coefficient
+  gather(polynomial, loss, -epoch, -contains("run"))
+```
+
+```{r}
+base_learning_d = base_learning_d %>%
+  mutate(learned="During training")
+```
+
+```{r}
+summary_plot(base_learning_d %>%
+               filter(run == 0,
+                      run_type != "nometa_fastrun"),
+             "epoch", "loss", "named_run_type",
+             continuous_x = T) +
+  labs(x="Epoch", y="Average training loss (basic)")
+
+ggsave("../../meta_RL/writing/figures/poly/base_learning_curves_with_lesions.png", width=6, height=3)
+```
+
+```{r}
+summary_plot(base_learning_d %>%
+               filter(run_type == "basic_ADAM_nobinary_slower"),
+             "epoch", "loss", "named_run_type",
+             continuous_x = T) +
+  labs(x="Epoch", y="Average training loss (basic)")
+
+ggsave("../../meta_RL/writing/figures/poly/base_learning_curves.png", width=6, height=3)
+```
 # sweeping
 
 
@@ -389,7 +424,7 @@ summary_plot(meta_d %>%
 ## Learning curves
 
 ```{r}
-learning_meta_d = load_d(results_dir, c("basic_ADAM_nobinary_slower", "basic_separate_meta", "language_meta_only", "untrained_baseline"), num_runs, "meta_true_losses") %>% 
+learning_meta_d = load_d(results_dir, c("basic_ADAM_nobinary_slower", "basic_separate_meta", "untrained_baseline"), num_runs, "meta_true_losses") %>% 
   filter(epoch %% 200 == 0) 
 ```
 
@@ -399,7 +434,7 @@ learning_meta_d = process_meta_d(learning_meta_d) %>%
 ```
 ```{r}
 summary_plot(learning_meta_d %>%
-               filter(run_type != "untrained_baseline",
+               filter(! (run_type %in% c("untrained_baseline", "language_meta_only")),
                       run == 0) %>%
                mutate(named_run_type = ifelse(named_run_type == "Language", "EML (+ language)", named_run_type)),
              "epoch", "loss", "named_run_type",
@@ -411,7 +446,7 @@ ggsave("../../meta_RL/writing/figures/poly/meta_learning_curves_with_separate.pn
 
 ```{r}
 summary_plot(learning_meta_d %>%
-               filter(! (run_type %in% c("untrained_baseline", "basic_separate_meta"))) %>%
+               filter(! (run_type %in% c("untrained_baseline", "language_meta_only", "basic_separate_meta"))) %>%
                mutate(named_run_type = ifelse(named_run_type == "Language", "EML (+ language)", named_run_type),
                       log_loss = log(loss)),
              "epoch", "loss", "named_run_type",
