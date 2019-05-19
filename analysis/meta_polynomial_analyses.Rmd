@@ -12,7 +12,7 @@ library(stargazer)
 num_runs = 5
 results_dir = "../results/newest_results/"
 
-result_subdirs = c("basic_ADAM_nobinary_slower", "untrained_baseline", "nometa_fastrun", "slower_integration")
+result_subdirs = c("basic_ADAM_nobinary_slower", "untrained_baseline", "nometa_fastrun", "slower_integration", "basic_separate_meta")
 language_result_subdirs = c("language_meta_only", "language_conditioned_meta_only")
 language_only_subdirs = c() # missing other losses
 
@@ -29,7 +29,7 @@ name_run_type = function(run_type) { # names for plotting
             # run_type == "language_only" ~ "Language + Hyper (no meta)",
             # run_type == "conditioned_language_baseline" ~ "Language + FF",
             run_type == "slower_integration" ~ "EML",
-            run_type == "basic_separate_meta" ~ "EML",
+            run_type == "basic_separate_meta" ~ "EML (unshared Z)",
             run_type == "nometa_fastrun" ~ "EML (no meta tasks)",
             run_type == "untrained_baseline" ~ "Untrained EML network",
             run_type == "hyper_continual_frozen" ~ "Tuning new task embeddings",
@@ -59,6 +59,7 @@ load_d = function(results_dir, result_subdirs, num_runs, file_type) {
     for (result_subdir in result_subdirs) {
       filename = sprintf("%s%s/run%i_%s.csv", results_dir, result_subdir, run_i, file_type)
       if (!file.exists(filename)) {
+        print(paste("skipping ", filename, sep=""))
         next
       }
       if (file_type == "config") {
@@ -95,7 +96,7 @@ name_var = function(var) { # var names for plotting
             var %in% c("run_type", "named_run_type") ~ "Run type",
             var == "loss" ~ "Average loss",
             var == "result_type" ~ "Hold-out type",
-            var == "meta_batch_size" ~ "Meta-network sample size"
+            var == "meta_batch_size" ~ "Meta-network sample size",
             T ~ var)
   }
 
@@ -240,6 +241,12 @@ summary_plot(base_d %>%
 ggsave("../../meta_RL/writing/figures/poly/basic_results_over_time.png", width=4.2, height=3)
 ```
 
+```{r}
+summary_plot(base_d %>%
+               filter(epoch == 0,
+                      run_type %in% c("basic_separate_meta", "basic_ADAM_nobinary_slower", "nometa_fastrun")),
+             "named_run_type", "loss", "is_new") 
+```
 # sweeping
 
 
@@ -319,13 +326,27 @@ meta_d = process_meta_d(meta_d) %>%
   mutate(learned="After training")
 ```
 
+
 ```{r}
 summary_plot(meta_d %>% 
-               filter(run_type %in% c("language_meta_only", "language_conditioned_meta_only", "untrained_baseline")),
+               filter(run_type %in% c("basic_ADAM_nobinary_slower", "basic_separate_meta"),
+                      run == 0),
              "named_run_type", "loss", "result_type") +
   ylim(0, NA) +
-  labs(y="Performance after meta-mapping") +
-  geom_hline(yintercept=0) +
+  labs(y="Loss on target task") 
+ggsave("../../meta_RL/writing/figures/poly/meta_results_unshared_vs_shared.png", width=6, height=3)
+```
+
+
+```{r}
+summary_plot(meta_d %>% 
+               filter(run_type %in% c("language_meta_only", "language_conditioned_meta_only", "untrained_baseline")) %>%
+               mutate(named_run_type = case_when(named_run_type == "Language" ~ "EML",
+                                                 named_run_type == "Language (non-hyper)" ~ "EML (non-hyper)",
+                                                 T ~ named_run_type)),
+             "named_run_type", "loss", "result_type") +
+  ylim(0, NA) +
+  labs(y="Loss on target task") +
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
 ggsave("../../meta_RL/writing/figures/poly/meta_results_conditioned_vs_hyper.png", width=6, height=3)
 ```
@@ -365,7 +386,40 @@ summary_plot(meta_d %>%
   ylim(0, NA) +
   facet_wrap(~meta_task)
 ```
+## Learning curves
 
+```{r}
+learning_meta_d = load_d(results_dir, c("basic_ADAM_nobinary_slower", "basic_separate_meta", "language_meta_only", "untrained_baseline"), num_runs, "meta_true_losses") %>% 
+  filter(epoch %% 200 == 0) 
+```
+
+```{r}
+learning_meta_d = process_meta_d(learning_meta_d) %>%
+  mutate(learned="During training")
+```
+```{r}
+summary_plot(learning_meta_d %>%
+               filter(run_type != "untrained_baseline",
+                      run == 0) %>%
+               mutate(named_run_type = ifelse(named_run_type == "Language", "EML (+ language)", named_run_type)),
+             "epoch", "loss", "named_run_type",
+             continuous_x = T) +
+  labs(x="Epoch", y="Loss on target task (train only)")
+
+ggsave("../../meta_RL/writing/figures/poly/meta_learning_curves_with_separate.png", width=6, height=3)
+```
+
+```{r}
+summary_plot(learning_meta_d %>%
+               filter(! (run_type %in% c("untrained_baseline", "basic_separate_meta"))) %>%
+               mutate(named_run_type = ifelse(named_run_type == "Language", "EML (+ language)", named_run_type),
+                      log_loss = log(loss)),
+             "epoch", "loss", "named_run_type",
+             continuous_x = T) +
+  labs(x="Epoch", y="Loss on target task (train only)")
+
+ggsave("../../meta_RL/writing/figures/poly/meta_learning_curves.png", width=6, height=3)
+```
 # language tests
 
 ```{r}
