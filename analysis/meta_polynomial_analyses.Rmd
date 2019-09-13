@@ -23,15 +23,15 @@ all_result_subdirs = c(result_subdirs, language_only_subdirs)
 language_result_subdirs = c(language_result_subdirs, language_only_subdirs)
 
 name_run_type = function(run_type) { # names for plotting
-  case_when(run_type == "basic_ADAM_nobinary_slower" ~ "EML",
+  case_when(run_type == "basic_ADAM_nobinary_slower" ~ "HoMM",
             run_type == "language_meta_only" ~ "Language",
             run_type == "language_conditioned_meta_only" ~ "Language (non-hyper)",
             # run_type == "language_only" ~ "Language + Hyper (no meta)",
             # run_type == "conditioned_language_baseline" ~ "Language + FF",
-            run_type == "slower_integration" ~ "EML",
-            run_type == "basic_separate_meta" ~ "EML (unshared Z)",
-            run_type == "nometa_fastrun" ~ "EML (no meta tasks)",
-            run_type == "untrained_baseline" ~ "Untrained EML network",
+            run_type == "slower_integration" ~ "HoMM",
+            run_type == "basic_separate_meta" ~ "HoMM (unshared Z)",
+            run_type == "nometa_fastrun" ~ "HoMM (no meta tasks)",
+            run_type == "untrained_baseline" ~ "Untrained HoMM network",
             run_type == "hyper_continual_frozen" ~ "Tuning new task embeddings",
             run_type == "hyper_continual_frozen_untrained_baseline" ~ "... in an untrained network",
             run_type == "hyper_continual_frozen_randomly_initialized_baseline" ~ "... from random embeddings",
@@ -347,11 +347,11 @@ process_meta_d = function(meta_d) {
            is_new_target = check_if_new_task(run, run_type, target),
            is_new_meta_mapping = check_if_new_meta_mapping(run, run_type, meta_task)) %>%
     ungroup() %>%
-    mutate(result_type=case_when(!is_new_argument & !is_new_meta_mapping ~ "Trained mapping, on trained task",
-                          is_new_argument & !is_new_meta_mapping ~ "Trained mapping, on held-out task",
-                          !is_new_argument & is_new_meta_mapping ~ "Held-out mapping, on trained task",
-                          is_new_argument & is_new_meta_mapping ~ "Held-out mapping, on held-out task"),
-           result_type = factor(result_type, levels = c('Trained mapping, on trained task', 'Trained mapping, on held-out task', 'Held-out mapping, on trained task', 'Held-out mapping, on held-out task')))
+    mutate(result_type=case_when(!is_new_argument & !is_new_meta_mapping ~ "Trained mapping, trained polynomial",
+                          is_new_argument & !is_new_meta_mapping ~ "Trained mapping, held-out polynomial",
+                          !is_new_argument & is_new_meta_mapping ~ "Held-out mapping, trained polynomial",
+                          is_new_argument & is_new_meta_mapping ~ "Held-out mapping, held-out polynomial"),
+           result_type = factor(result_type, levels = c('Trained mapping, trained polynomial', 'Trained mapping, held-out polynomial', 'Held-out mapping, trained polynomial', 'Held-out mapping, held-out polynomial')))
   return(meta_d)
 }
 ```
