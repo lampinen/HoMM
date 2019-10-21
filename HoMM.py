@@ -12,6 +12,8 @@ from copy import deepcopy
 from itertools import permutations
 from collections import Counter
 
+from configs.default_architecture_config import default_architecture_config
+
 #from orthogonal_matrices import random_orthogonal
 
 ### Parameters #################################################
@@ -79,20 +81,15 @@ class memory_buffer(object):
 
 class meta_model(object):
     """A base Homoiconic Meta-mapping model."""
-    def __init__(self, config="configs/default_architecture_config.csv"):
+    def __init__(self, architecture_config=None):
         """args:
-            config: a config dict, or name of a csv file containing one.
+            architecture_config: a config dict, or None to use the default.
         """
 
-        # load config file if necessary
-        if isinstance(config, str):
-            config_dict = {}
-            with open(config, "r") as config_file:
-                for line in config_file.readlines():
-                    key, value = line.split(",", 1)
-                    config_dict[key] = value
-            config = config_dict
-
+        if architecture_config is None:
+            config = default_architecture_config 
+        else:
+            config = architecture_config
         self.config = config
         self.memory_buffer_size = config["memory_buffer_size"]
         self.meta_batch_size = config["meta_batch_size"]
