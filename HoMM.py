@@ -79,9 +79,38 @@ class memory_buffer(object):
         return self.input_buffer, self.outcome_buffer
 
 
+# default IO nets are those used for the original polynomials experiments
+def default_input_processor(input_ph, IO_num_hidden, z_dim, internal_nonlinearity):
+        input_processing_1 = slim.fully_connected(input_ph, IO_num_hidden,
+                                                  activation_fn=internal_nonlinearity)
+
+        input_processing_2 = slim.fully_connected(input_processing_1, IO_num_hidden,
+                                                  activation_fn=internal_nonlinearity)
+
+        processed_input = slim.fully_connected(input_processing_2, z_dim,
+                                               activation_fn=None)
+        return processed_input
+
+
+def default_target_processor(targets, IO_num_hidden, z_dim, internal_nonlinearity):
+    output_size = sum(tf.get_shape(targets)[1:])
+    target_processor_nontf = random_orthogonal(z_dim)[:, :output_size]
+    target_processor = tf.get_variable('target_processor',
+                                        shape=[num_hidden_hyper, output_size],
+                                        initializer=tf.constant_initializer(target_processor_nontf))
+    processed_targets = tf.matmul(targets, tf.transpose(target_processor))
+    return processed_targets, target_processor
+
+
+def default_target_processor(output_embeddings, target_processor):
+    processed_outputs = tf.matmul(output_embeddings, target_processor)
+    return processed_outputs 
+
+
 class meta_model(object):
     """A base Homoiconic Meta-mapping model."""
-    def __init__(self, architecture_config=None):
+    def __init__(self, architecture_config=None, input_processor=None
+                 output_processor=None):
         """args:
             architecture_config: a config dict, or None to use the default.
         """
@@ -102,42 +131,42 @@ class meta_model(object):
         # network
 
         # base task input (polynomials, need to refactor)
-        input_size = config["num_input"]
-        output_size = config["num_output"]
+        input_shape = config["input_shape"]
+        output_shape = config["output_shape"]
 
         self.base_input_ph = tf.placeholder(
-            tf.float32, shape=[None, input_size])
+            tf.float32, shape=[None] + input_shape)
         self.base_target_ph = tf.placeholder(
-            tf.float32, shape=[None, output_size])
+            tf.float32, shape=[None] + output_shape)
 
         self.lr_ph = tf.placeholder(tf.float32)
         self.keep_prob_ph = tf.placeholder(tf.float32) # dropout keep prob
 
-        num_hidden = config["num_hidden"]
-        num_hidden_hyper = config["num_hidden_hyper"]
+        F_num_hidden = config["F_num_hidden"]
+        IO_num_hidden = config["IO_num_hidden"]
+        num_hidden_hyper = config["H_num_hidden"]
+        z_dim = config["z_dim"]
         internal_nonlinearity = config["internal_nonlinearity"]
         output_nonlinearity = config["output_nonlinearity"]
-        input_processing_1 = slim.fully_connected(self.base_input_ph, num_hidden,
-                                                  activation_fn=internal_nonlinearity)
 
-        input_processing_2 = slim.fully_connected(input_processing_1, num_hidden,
-                                                  activation_fn=internal_nonlinearity)
+        if input_processor is None:
+            input_processor = lambda x: default_input_processor(
+                x, IO_num_hidden, z_dim, internal_nonlinearity)
+        self.processed_input = input_processor(self.base_input_ph)
 
-        processed_input = slim.fully_connected(input_processing_2, num_hidden_hyper,
-                                               activation_fn=internal_nonlinearity)
-        self.processed_input = processed_input
+        if target_processor is None:
+            target_processor = lambda x: default_target_processor(
+                x, IO_num_hidden, z_dim, internal_nonlinearity)
+            processed_targets, target_processor = target_processor(self.base_target_ph)
+        else:
+            if output_processor is None:
+                raise ValueError("You cannot use the default output processor "
+                                 "without the default target processor.")
+            processed_targets = target_processor(self.base_target_ph)
 
-        all_target_processor_nontf = random_orthogonal(num_hidden_hyper)[:, :output_size + 1]
-        self.target_processor_nontf = all_target_processor_nontf[:, :output_size]
-        self.target_processor = tf.get_variable('target_processor',
-                                                shape=[num_hidden_hyper, output_size],
-                                                initializer=tf.constant_initializer(self.target_processor_nontf))
-        processed_targets = tf.matmul(self.base_target_ph, tf.transpose(self.target_processor))
-
-        def _output_mapping(X):
-            """hidden space mapped back to T/F output logits"""
-            res = tf.matmul(X, self.target_processor)
-            return res
+        if output_processor is None:
+            output_processor = lambda x: default_output_processor(
+                x, target_processor)
 
         ## Meta: (Input, Output) -> Z (function embedding)
         if config["persistent_task_reps"]:
@@ -151,6 +180,7 @@ class meta_model(object):
             #self.meta_input_2_ph = tf.placeholder(tf.float32, shape=[None, config["z_dim"]]) # for binary
             self.meta_target_ph = tf.placeholder(tf.float32, [None, config["z_dim"]])
 
+        # TODO: fix this
         self.meta_class_ph = tf.placeholder(tf.float32, shape=[None, 1]) # for meta classification tasks
         
         self.class_processor_nontf = all_target_processor_nontf[:, output_size:]
