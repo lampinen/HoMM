@@ -1,4 +1,4 @@
-import HoMM 
+import ..HoMM 
 from polynomials import *
 from itertools import permutations
 
@@ -42,16 +42,14 @@ class poly_HoMM_model(HoMM.HoMM_model):
 
         self.run_config["vocab"] = vocab
 
-        self.build_architecture(
+        self._build_architecture(
             self, architecture_config=None, input_processor=None
             output_processor=None, base_loss=None, meta_loss=None)
+        self._sess_and_init()
 
     def fill_buffers(self, num_data_points=1, include_new=False):
         """Add new "experiences" to memory buffers."""
-        if include_new:
-            this_tasks = self.all_base_tasks_with_implied
-        else:
-            this_tasks = self.initial_base_tasks_with_implied
+        this_tasks = 
         for t in this_tasks:
             buff = self.memory_buffers[_stringify_polynomial(t)]
             x_data = np.zeros([num_data_points, self.config["num_input"]])
@@ -61,6 +59,26 @@ class poly_HoMM_model(HoMM.HoMM_model):
                 x_data[point_i, :] = point
                 y_data[point_i, :] = t.evaluate(point)
             buff.insert(x_data, y_data)
+
+    def intify_task(self, task):
+        if task == "square":
+            return [vocab_to_int[task]]
+        elif task[:3] == "add":
+            val = str(int(round(float(task[4:]))))
+            return [vocab_to_int["add"]] + [vocab_to_int[x] for x in val]
+        elif task[:4] == "mult":
+            val = str(int(round(float(task[5:]))))
+            return [vocab_to_int["mult"]] + [vocab_to_int[x] for x in val]
+        elif task[:7] == "permute":
+            val = task[8:]
+            return [vocab_to_int["permute"]] + [vocab_to_int[x] for x in val]
+        elif task[:3] == "is_":
+            if task[3] == "X":
+                return [vocab_to_int[x] for x in task.split('_')] 
+            else:
+                return [vocab_to_int["is"], vocab_to_int[task[3:]]]
+        else:
+            raise ValueError("Unrecognized meta task: %s" % task)
 
     def run_training(self, filename_prefix, num_epochs, include_new=False):
         """Train model on base and meta tasks, if include_new include also

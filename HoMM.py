@@ -109,7 +109,7 @@ class HoMM_model(object):
         """Initialize the basics.
         
         The child classes should also add all the tasks in their __init__
-        method, and then call _build_architecture.
+        method, and then call _build_architecture and _sess_and_init.
         """
         self.num_tasks = 0
         self.memory_buffers = {}
@@ -472,6 +472,8 @@ class HoMM_model(object):
 
         self.meta_map_output = _task_network(self.meta_map_task_params,
                                              meta_input_embeddings) 
+        self.meta_map_lang_output = _task_network(self.lang_task_params,
+                                                  meta_input_embeddings) 
 
         self.base_cached_emb_raw_output = _task_network(
             self.cached_emb_task_params, processed_input)
@@ -529,6 +531,8 @@ class HoMM_model(object):
         self.meta_class_train = optimizer.minimize(self.total_meta_class_loss)
         self.meta_map_train = optimizer.minimize(self.total_meta_map_loss)
 
+
+    def _sess_and_init(self):
         # Saver
         self.saver = tf.train.Saver()
 
@@ -537,8 +541,7 @@ class HoMM_model(object):
         sess_config.gpu_options.allow_growth = True
         self.sess = tf.Session(config=sess_config)
         self.sess.run(tf.global_variables_initializer())
-        self.fill_buffers(num_data_points=config["memory_buffer_size"],
-                          include_new=True)
+        self.fill_buffers(num_data_points=self.run_config["memory_buffer_size"])
 
         self.refresh_meta_dataset_cache()
        
@@ -551,8 +554,7 @@ class HoMM_model(object):
                              self.run_config["input_shape"][0],
                              self.run_config["output_shape"][0])
 
-
-    def task_lookup(self, task):
+    def base_task_lookup(self, task):
         if isinstance(task, str):
             task_name = task
         else:
@@ -567,10 +569,19 @@ class HoMM_model(object):
                 self.memory_buffers[task_name],
                 self.task_indices[task_name])
 
+    def meta_task_lookup(self, task):
+        if task not in self.task_indices:
+            self.meta_datasets[task_name] = {} 
+            self.task_indices[task] = self.num_tasks
+            self.num_tasks += 1
+
+        return (task_name,
+                self.meta_datasets[task_name],
+                self.task_indices[task_name])
 
     def fill_buffers(self, num_data_points=1, include_new=False):
         """Add new "experiences" to memory buffers."""
-        raise ValueError("fill_buffers() should be overridden by the child class!")
+        raise NotImplementedError("fill_buffers() should be overridden by the child class!")
 
 
     def _random_guess_mask(self, dataset_length, meta_batch_size=None):
@@ -580,6 +591,79 @@ class HoMM_model(object):
         indices = np.random.permutation(dataset_length)[:meta_batch_size]
         mask[indices] = True
         return mask
+
+
+    def sample_from_memory_buffer(self, memory_buffer):
+        """Return experiences from the memory buffer.
+        
+        The results are expected to be a set of inputs and targets, so this
+        will likely need to be overridden for other settings such as RL. 
+        """
+    input_buff, output_buff = memory_buffer.get_memories()
+    return input_buff, output_buff
+
+
+    def intify_task(self, task): 
+        """Will need to be overridden"""
+        raise NotImplementedError("intify task should be overridden by the child class!")
+
+    def build_feed_dict(self, task, lr=None, fed_embedding=None, call_type="base_train"):
+        """Build a feed dict.
+
+        This function should be overridden by the child class if the necessary.
+        
+        Args:
+            task: the task def.
+            lr: the learning rate if training.
+            fed_embedding: embedding to use for performing the task, if any.
+            call_type: one of "base_standard_train", "base_standard_eval",
+                "base_lang_train", "base_lang_eval", "base_fed_eval",
+                "base_cached_eval", "metaclass_standard_train", 
+                "metamap_standard_train", "metaclass_cached_eval",
+                "metamap_cached_eval", "metaclass_lang_train", 
+                "metamap_lang_train", "metaclass_lang_eval", 
+                "metamap_lang_eval"
+        """
+        feed_dict = {}
+
+        base_or_meta, call_type, train_or_eval = call_type.split("_")
+
+        if base_or_meta == "base":
+            task_name, memory_buffer, task_index = self.base_task_lookup(task)
+            inputs, outputs = self.sample_from_memory_buffer(memory_buffer0
+            feed_dict[self.base_input_ph] = inputs
+            feed_dict[self.base_target_ph] = outputs
+            feed_dict[self.guess_input_mask_ph] = self._random_guess_mask(
+                len(outputs))
+        else: # meta call
+            task_name, meta_dataset, task_index = self.meta_task_lookup(task)
+            meta_input_indices = meta_dataset[train_or_eval]["in"],
+            feed_dict[self.meta_input_indices_ph] = meta_input_indices
+            feed_dict[self.guess_input_mask_ph] = self._random_guess_mask(
+                len(meta_input_indices))
+            meta_targets = meta_dataset[train_or_eval]["out"]
+            if base_or_meta == "metamap":
+                feed_dict[self.meta_target_indices_ph] = meta_targets
+            else:
+                feed_dict[self.meta_class_ph] = meta_targets
+
+        if call_type == "fed":
+            feed_dict[self.feed_embedding_ph] = fed_embedding
+        elif call_type == "lang":
+            feed_dict[self.language_input_ph] = self.intify_task(task_name)
+
+        if train_or_eval == "train":
+            feed_dict[self.lr_ph] = lr
+            feed_dict[self.keep_prob_ph] = self.tkp
+            if call_type == "lang":
+                feed_dict[self.lang_keep_prob_ph] = self.lang_keep_prob
+        else:
+            feed_dict[self.keep_prob_ph] = 1.
+            if call_type == "lang":
+                feed_dict[self.lang_keep_prob_ph] = 1. 
+
+
+        return feed_dict
 
 
     def base_train_step(self, task, lr):
@@ -986,5 +1070,5 @@ class HoMM_model(object):
 
 
     def run_training(self):
-        raise ValueError("run_training() should be overridden by the child class!")
+        raise NotImplementedError("run_training() should be overridden by the child class!")
 
