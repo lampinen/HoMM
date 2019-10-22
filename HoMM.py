@@ -175,16 +175,10 @@ class HoMM_model(object):
                 x, target_processor_var)
 
         ## Meta: (Input, Output) -> Z (function embedding)
-        if config["persistent_task_reps"]:
-            self.task_index_ph = tf.placeholder(tf.int32, [None,])  # if using persistent task reps
+        self.task_index_ph = tf.placeholder(tf.int32, [None,])  # if using persistent task reps
 
-            self.meta_input_indices_ph = tf.placeholder(tf.int32, shape=[None, ])
-            #self.meta_input_2_indices_ph = tf.placeholder(tf.int32, shape=[None, ]) # for binary
-            self.meta_target_indices_ph = tf.placeholder(tf.int32, [None,])
-        else:
-            self.meta_input_ph = tf.placeholder(tf.float32, shape=[None, config["z_dim"]])
-            #self.meta_input_2_ph = tf.placeholder(tf.float32, shape=[None, config["z_dim"]]) # for binary
-            self.meta_target_ph = tf.placeholder(tf.float32, [None, config["z_dim"]])
+        self.meta_input_indices_ph = tf.placeholder(tf.int32, shape=[None, ])
+        self.meta_target_indices_ph = tf.placeholder(tf.int32, [None,])
 
         self.meta_class_ph = tf.placeholder(tf.float32, shape=[None, 1]) # for meta classification tasks
 
@@ -261,7 +255,7 @@ class HoMM_model(object):
 #            self.combined_meta_inputs, self.meta_target_ph)
 
 
-        ## language processing: lang -> emb
+        ## language processing: lang -> Z
         num_hidden_language = config["num_hidden_language"]
         num_lstm_layers = config["num_lstm_layers"]
 
@@ -308,29 +302,31 @@ class HoMM_model(object):
                                                        False)
 
         ## persistent/cached embeddings
+        # if not config["persistent_task_reps"], these will just be updated
+        # manually. Either way, they are used for eval + meta tasks.
+        with tf.variable_scope("persistent_cached"):
+            self.persistent_embeddings = tf.get_variable(
+                "cached_task_embeddings",
+                [self.total_num_tasks,
+                 config["z_dim"]],
+                dtype=tf.float32)
+
+            self.update_persistent_embeddings_ph = tf.placeholder(
+                tf.float32,
+                [None, config["z_dim"]])
+
+            self.update_embeddings = tf.scatter_nd_update(
+                self.persistent_embeddings,
+                self.task_index_ph,
+                self.update_persistent_embeddings_ph)
+
+        def _get_persistent_embeddings(task_indices):
+            persistent_embs = self.persistent_embeddings
+
+            return tf.nn.embedding_lookup(persistent_embs,
+                                          task_indices)
+
         if config["persistent_task_reps"]:
-            with tf.variable_scope("persistent"):
-                self.persistent_embeddings = tf.get_variable(
-                    "cached_task_embeddings",
-                    [self.total_num_tasks,
-                     config["z_dim"]],
-                    dtype=tf.float32)
-
-                self.update_persistent_embeddings_ph = tf.placeholder(
-                    tf.float32,
-                    [None, config["z_dim"]])
-
-                self.update_embeddings = tf.scatter_nd_update(
-                    self.persistent_embeddings,
-                    self.task_index_ph,
-                    self.update_persistent_embeddings_ph)
-
-            def _get_persistent_embeddings(task_indices):
-                persistent_embs = self.persistent_embeddings
-
-                return tf.nn.embedding_lookup(persistent_embs,
-                                              task_indices)
-
             def _get_combined_embedding_and_match_loss(guess_embedding, task_index,
                                                        guess_weight,
                                                        target_net=False):
@@ -344,7 +340,7 @@ class HoMM_model(object):
                     guess_embedding - cached_embedding)
                 return combined_embedding, emb_match_loss
 
-            self.lookup_cached_embs = _get_persistent_embeddings(
+            self.lookup_cached_emb = _get_persistent_embeddings(
                 self.task_index_ph)
 
             (self.base_combined_emb,
@@ -352,14 +348,10 @@ class HoMM_model(object):
                 self.base_guess_emb, self.task_index_ph,
                 config["combined_emb_guess_weight"])
 
-            meta_input_embeddings = _get_persistent_embeddings(
-                self.meta_input_indices_ph)
-            meta_target_embeddings = _get_persistent_embeddings(
-                self.meta_target_indices_ph)
-
-        else:
-            meta_input_embeddings = self.meta_input_ph
-            meta_target_embeddings = self.meta_target_ph
+        meta_input_embeddings = _get_persistent_embeddings(
+            self.meta_input_indices_ph)
+        meta_target_embeddings = _get_persistent_embeddings(
+            self.meta_target_indices_ph)
 
         self.meta_class_guess_emb = _meta_network(meta_input_embeddings,
                                                   processed_class)
@@ -383,7 +375,7 @@ class HoMM_model(object):
             self.meta_map_combined_emb = self.meta_map_guess_emb
 
 
-        ## hyper_network: emb -> (f: emb -> emb)
+        ## hyper_network: Z -> (F: Z -> Z)
         self.feed_embedding_ph = tf.placeholder(np.float32,
                                                 [1, num_hidden_hyper])
 
@@ -447,6 +439,8 @@ class HoMM_model(object):
         self.lang_task_params = _hyper_network(self.language_function_emb)
         self.fed_emb_task_params = _hyper_network(self.feed_embedding_ph)
 
+        self.cached_emb_task_params = _hyper_network(self.lookup_cached_emb)
+
         ## task network F: Z -> Z
         def _task_network(task_params, processed_input):
             hweights, hbiases = task_params
@@ -469,7 +463,8 @@ class HoMM_model(object):
 
         self.base_raw_output_fed_emb = _task_network(self.fed_emb_task_params,
                                                      processed_input)
-        self.base_output_fed_emb = output_processor(self.base_raw_output_fed_emb)
+        self.base_output_fed_emb = output_processor(
+            self.base_raw_output_fed_emb)
 
         self.meta_class_raw_output = _task_network(self.meta_class_task_params,
                                                    meta_input_embeddings)
@@ -478,11 +473,13 @@ class HoMM_model(object):
         self.meta_map_output = _task_network(self.meta_map_task_params,
                                              meta_input_embeddings) 
 
-        if persistent_task_reps:
-            self.base_cached_raw_output = _task_network(self.cached_emb_task_params,
-                                                        processed_input)
-            self.meta_cached_raw_output = _task_network(self.cached_emb_task_params,
-                                                        meta_input_embeddings)
+        self.base_cached_emb_raw_output = _task_network(
+            self.cached_emb_task_params, processed_input)
+        self.base_cached_emb_output = output_processor(
+            self.base_cached_emb_raw_output)
+
+        self.meta_cached_emb_raw_output = _task_network(
+            self.cached_emb_task_params, meta_input_embeddings)
 
         ## Losses 
 
@@ -491,16 +488,34 @@ class HoMM_model(object):
         if meta_loss is None:
             meta_loss = default_meta_loss
 
-        # TODO: Add the emb_match losses, update
         self.total_base_loss = base_loss(self.base_output, self.base_target_ph) 
 
-        self.total_base_lang_loss = base_loss(self.base_lang_output, self.base_target_ph) 
+        self.total_base_lang_loss = base_loss(self.base_lang_output,
+                                              self.base_target_ph) 
 
-        self.total_base_fed_emb_loss = base_loss(self.base_output_fed_emb, self.base_target_ph) 
+        self.total_base_fed_emb_loss = base_loss(self.base_output_fed_emb,
+                                                 self.base_target_ph) 
 
-        self.total_meta_class_loss = meta_loss(self.meta_class_output, processed_class) 
+        self.total_meta_class_loss = meta_loss(self.meta_class_output,
+                                               processed_class) 
 
-        self.total_meta_map_loss = meta_loss(self.meta_map_output, ) 
+        self.total_meta_map_loss = meta_loss(self.meta_map_output,
+                                             meta_target_embeddings) 
+
+
+        self.total_base_cached_emb_loss = base_loss(
+            self.base_cached_emb_output, self.base_target_ph) 
+
+        self.total_meta_cached_emb_class_loss = meta_loss(
+            self.meta_cached_emb_raw_output, processed_class) 
+
+        self.total_meta_cached_emb_map_loss = meta_loss(
+            self.meta_map_output, meta_target_embeddings) 
+
+        if persistent_task_reps: # Add the emb_match losses
+            self.total_base_loss += self.base_emb_match_loss
+            self.total_meta_class_loss += self.meta_class_emb_match_loss
+            self.total_meta_map_loss += self.meta_map_emb_match_loss
 
         if config["optimizer"] == "Adam":
             optimizer = tf.train.AdamOptimizer(self.lr_ph)
@@ -536,7 +551,7 @@ class HoMM_model(object):
         else:
             task_name = str(task)
 
-        if task_name not in self.memory_buffers:
+        if task_name not in self.task_indices:
             self.memory_buffers[task_name] = memory_buffer()
             self.task_indices[task_name] = self.num_tasks
             self.num_tasks += 1
