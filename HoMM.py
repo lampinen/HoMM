@@ -7,42 +7,9 @@ import tensorflow as tf
 import tensorflow.contrib.slim as slim
 import os
 import re
-#import cProfile
-from copy import deepcopy
-from itertools import permutations
-from collections import Counter
 
 from configs.default_architecture_config import default_architecture_config
 
-#from orthogonal_matrices import random_orthogonal
-
-### Parameters #################################################
-
-poly_fam = polynomial_family(config["num_variables"], config["max_degree"])
-config["variables"] = poly_fam.variables
-
-config["base_meta_tasks"] = ["is_constant_polynomial"] + ["is_intercept_nonzero"] + ["is_%s_relevant" % var for var in config["variables"]]
-
-config["base_meta_mappings"] = ["square"] + ["add_%f" % c for c in config["meta_add_vals"]] + ["mult_%f" % c for c in config["meta_mult_vals"]]
-permutation_mappings = ["permute_" + "".join([str(x) for x in p]) for p in permutations(range(config["num_variables"]))]
-np.random.seed(0)
-np.random.shuffle(permutation_mappings)
-config["base_meta_mappings"] += permutation_mappings[:len(permutation_mappings)//2]
-config["new_meta_mappings"] += permutation_mappings[len(permutation_mappings)//2:]
-
-config["base_meta_binary_funcs"] = []#["binary_sum", "binary_mult"] 
-
-
-# filtering out held-out meta tasks
-config["base_meta_tasks"] = [x for x in config["base_meta_tasks"] if x not in config["new_meta_tasks"]]
-config["meta_mappings"] = [x for x in config["base_meta_mappings"] if x not in config["new_meta_mappings"]]
-
-
-# language
-vocab = ['PAD'] + [str(x) for x in range(10)] + [".", "+", "-", "^"] + poly_fam.variables
-vocab_to_int = dict(zip(vocab, range(len(vocab))))
-
-config["vocab"] = vocab
 
 ### END PARAMATERS (finally) ##################################
 class memory_buffer(object):
@@ -116,14 +83,41 @@ def default_output_processor(output_embeddings, target_processor):
     return processed_outputs 
 
 
-class meta_model(object):
-    """A base Homoiconic Meta-mapping model."""
-    def __init__(self, architecture_config=None, input_processor=None
-                 output_processor=None):
-        """args:
-            architecture_config: a config dict, or None to use the default.
-        """
+def default_base_loss(outputs, targets):
+    return tf.nn.l2_loss(outputs - targets)
 
+
+def default_meta_loss(outputs, targets):
+    batch_losses = tf.reduce_sum(tf.square(outputs - targets), axis=1)
+    return tf.reduce_mean(batch_losses)
+
+
+def _pad(l, length, pad_token="PAD"):
+    return [pad_token]*(length - len(l)) + l
+
+
+def save_config(filename, config):
+    with open(filename, "w") as fout:
+        fout.write("key, value\n")
+        for key, value in config.items():
+            fout.write(key + ", " + str(value) + "\n")
+
+
+class HoMM_model(object):
+    """A base Homoiconic Meta-mapping model."""
+    def __init__(self, run_config):
+        """Initialize the basics.
+        
+        The child classes should also add all the tasks in their __init__
+        method, and then call _build_architecture.
+        """
+        self.num_tasks = 0
+        self.memory_buffers = {}
+        self.task_indices = {}
+        self.run_config = {} 
+
+    def _build_architecture(self, architecture_config=None, input_processor=None
+                            output_processor=None, base_loss=None, meta_loss=None):
         if architecture_config is None:
             config = default_architecture_config 
         else:
@@ -138,6 +132,7 @@ class meta_model(object):
         self.vocab_size = len(self.vocab)
 
         # network
+        var_scale_init = tf.contrib.layers.variance_scaling_initializer(factor=1., mode='FAN_AVG')
 
         # base task input (polynomials, need to refactor)
         input_shape = config["input_shape"]
@@ -317,7 +312,7 @@ class meta_model(object):
             with tf.variable_scope("persistent"):
                 self.persistent_embeddings = tf.get_variable(
                     "cached_task_embeddings",
-                    [self.num_base_tasks + len(self.meta_tasks),
+                    [self.total_num_tasks,
                      config["z_dim"]],
                     dtype=tf.float32)
 
@@ -490,28 +485,22 @@ class meta_model(object):
                                                         meta_input_embeddings)
 
         ## Losses 
+
+        if base_loss is None:
+            base_loss = default_base_loss
+        if meta_loss is None:
+            meta_loss = default_meta_loss
+
         # TODO: Add the emb_match losses, update
-        self.base_loss = tf.square(self.base_output - self.base_target_ph)
-        self.total_base_loss = tf.reduce_mean(self.base_loss)
+        self.total_base_loss = base_loss(self.base_output, self.base_target_ph) 
 
-        self.base_lang_loss = tf.square(self.base_lang_output - self.base_target_ph)
-        self.total_base_lang_loss = tf.reduce_mean(self.base_lang_loss)
+        self.total_base_lang_loss = base_loss(self.base_lang_output, self.base_target_ph) 
 
-        self.base_fed_emb_loss = tf.square(
-            self.base_output_fed_emb - self.base_target_ph)
-        self.total_base_fed_emb_loss = tf.reduce_mean(self.base_fed_emb_loss)
+        self.total_base_fed_emb_loss = base_loss(self.base_output_fed_emb, self.base_target_ph) 
 
-        self.meta_t_loss = tf.reduce_sum(
-            tf.square(self.meta_t_output - processed_class), axis=1)
-        self.total_meta_t_loss = tf.reduce_mean(self.meta_t_loss)
+        self.total_meta_class_loss = meta_loss(self.meta_class_output, processed_class) 
 
-        self.meta_m_loss = tf.reduce_sum(
-            tf.square(self.meta_m_output - self.meta_target_ph), axis=1)
-        self.total_meta_m_loss = tf.reduce_mean(self.meta_m_loss)
-
-        self.meta_bf_loss = tf.reduce_sum(
-            tf.square(self.meta_bf_output - self.meta_target_ph), axis=1)
-        self.total_meta_bf_loss = tf.reduce_mean(self.meta_bf_loss)
+        self.total_meta_map_loss = meta_loss(self.meta_map_output, ) 
 
         if config["optimizer"] == "Adam":
             optimizer = tf.train.AdamOptimizer(self.lr_ph)
@@ -522,9 +511,8 @@ class meta_model(object):
 
         self.base_train = optimizer.minimize(self.total_base_loss)
         self.base_lang_train = optimizer.minimize(self.total_base_lang_loss)
-        self.meta_t_train = optimizer.minimize(self.total_meta_t_loss)
-        self.meta_m_train = optimizer.minimize(self.total_meta_m_loss)
-        self.meta_bf_train = optimizer.minimize(self.total_meta_bf_loss)
+        self.meta_class_train = optimizer.minimize(self.total_meta_class_loss)
+        self.meta_map_train = optimizer.minimize(self.total_meta_map_loss)
 
         # Saver
         self.saver = tf.train.Saver()
@@ -538,23 +526,29 @@ class meta_model(object):
                           include_new=True)
 
         self.refresh_meta_dataset_cache()
+       
+        self.save_config(# TODO, save both configs
+
+
+    def task_lookup(self, task):
+        if isinstance(task, str):
+            task_name = task
+        else:
+            task_name = str(task)
+
+        if task_name not in self.memory_buffers:
+            self.memory_buffers[task_name] = memory_buffer()
+            self.task_indices[task_name] = self.num_tasks
+            self.num_tasks += 1
+
+        return (task_name,
+                self.memory_buffers[task_name],
+                self.task_indices[task_name])
 
 
     def fill_buffers(self, num_data_points=1, include_new=False):
         """Add new "experiences" to memory buffers."""
-        if include_new:
-            this_tasks = self.all_base_tasks_with_implied
-        else:
-            this_tasks = self.initial_base_tasks_with_implied
-        for t in this_tasks:
-            buff = self.memory_buffers[_stringify_polynomial(t)]
-            x_data = np.zeros([num_data_points, self.config["num_input"]])
-            y_data = np.zeros([num_data_points, self.config["num_output"]])
-            for point_i in range(num_data_points):
-                point = t.family.sample_point(val_range=self.config["point_val_range"])
-                x_data[point_i, :] = point
-                y_data[point_i, :] = t.evaluate(point)
-            buff.insert(x_data, y_data)
+        raise ValueError("fill_buffers() should be overridden by the child class!")
 
 
     def _random_guess_mask(self, dataset_length, meta_batch_size=None):
@@ -566,7 +560,7 @@ class meta_model(object):
         return mask
 
 
-    def base_train_step(self, memory_buffer, lr):
+    def base_train_step(self, task, lr):
         input_buff, output_buff = memory_buffer.get_memories()
         feed_dict = {
             self.base_input_ph: input_buff,
@@ -969,205 +963,6 @@ class meta_model(object):
         self.saver.restore(self.sess, filename)
 
 
-    def run_training(self, filename_prefix, num_epochs, include_new=False):
-        """Train model on base and meta tasks, if include_new include also
-        the new ones."""
-        config = self.config
-        loss_filename = filename_prefix + "_losses.csv"
-        sweep_filename = filename_prefix + "_sweep_losses.csv"
-        meta_filename = filename_prefix + "_meta_true_losses.csv"
-        lang_filename = filename_prefix + "_language_losses.csv"
-        train_language = config["train_language"]
-        train_base = config["train_base"]
-        train_meta = config["train_meta"]
+    def run_training(self):
+        raise ValueError("run_training() should be overridden by the child class!")
 
-        with open(loss_filename, "w") as fout, open(meta_filename, "w") as fout_meta, open(lang_filename, "w") as fout_lang:
-            base_names, base_losses = self.run_base_eval(
-                include_new=include_new)
-            meta_names, meta_losses = self.run_meta_loss_eval(
-                include_new=include_new)
-            meta_true_names, meta_true_losses = self.run_meta_true_eval(
-                include_new=include_new)
-
-            fout.write("epoch, " + ", ".join(base_names + meta_names) + "\n")
-            fout_meta.write("epoch, " + ", ".join(meta_true_names) + "\n")
-
-            base_loss_format = ", ".join(["%f" for _ in base_names]) + "\n"
-            loss_format = ", ".join(["%f" for _ in base_names + meta_names]) + "\n"
-            meta_true_format = ", ".join(["%f" for _ in meta_true_names]) + "\n"
-
-            if train_language:
-                (base_lang_names, 
-                 base_lang_losses) = self.run_base_language_eval(
-                    include_new=include_new)
-                lang_loss_format = ", ".join(["%f" for _ in base_lang_names]) + "\n"
-                fout_lang.write("epoch, " + ", ".join(base_lang_names) + "\n")
-
-            s_epoch  = "0, "
-            curr_losses = s_epoch + (loss_format % tuple(
-                base_losses + meta_losses))
-            curr_meta_true = s_epoch + (meta_true_format % tuple(
-                meta_true_losses))
-            fout.write(curr_losses)
-            fout_meta.write(curr_meta_true)
-
-            if train_language:
-                curr_lang_losses = s_epoch + (lang_loss_format % tuple(
-                    base_lang_losses))
-                fout_lang.write(curr_lang_losses)
-
-            if config["sweep_meta_batch_sizes"] is not None:
-                with open(sweep_filename, "w") as fout_sweep:
-                    sweep_names, sweep_losses = self.run_base_eval(
-                        include_new=include_new, sweep_meta_batch_sizes=config["sweep_meta_batch_sizes"])
-                    fout_sweep.write("epoch, size, " + ", ".join(base_names) + "\n")
-                    for i, swept_batch_size in enumerate(config["sweep_meta_batch_sizes"]):
-                        swept_losses = s_epoch + ("%i, " % swept_batch_size) + (base_loss_format % tuple(sweep_losses[i]))
-                        fout_sweep.write(swept_losses)
-
-            if include_new:
-                tasks = self.all_tasks_with_implied
-                learning_rate = config["new_init_learning_rate"]
-                language_learning_rate = config["new_init_language_learning_rate"]
-                meta_learning_rate = config["new_init_meta_learning_rate"]
-            else:
-                tasks = self.all_initial_tasks_with_implied
-                learning_rate = config["init_learning_rate"]
-                language_learning_rate = config["init_language_learning_rate"]
-                meta_learning_rate = config["init_meta_learning_rate"]
-
-            save_every = config["save_every"]
-            early_stopping_thresh = config["early_stopping_thresh"]
-            lr_decays_every = config["lr_decays_every"]
-            lr_decay = config["lr_decay"]
-            language_lr_decay = config["language_lr_decay"]
-            meta_lr_decay = config["meta_lr_decay"]
-            min_learning_rate = config["min_learning_rate"]
-            min_meta_learning_rate = config["min_meta_learning_rate"]
-            min_language_learning_rate = config["min_language_learning_rate"]
-
-
-            self.fill_buffers(num_data_points=config["memory_buffer_size"],
-                              include_new=True)
-            self.refresh_meta_dataset_cache(include_new=include_new)
-            for epoch in range(1, num_epochs+1):
-                if epoch % config["refresh_mem_buffs_every"] == 0:
-                    self.fill_buffers(num_data_points=config["memory_buffer_size"],
-                                      include_new=True)
-                if epoch % config["refresh_meta_cache_every"] == 0:
-                    self.refresh_meta_dataset_cache(include_new=include_new)
-
-                order = np.random.permutation(len(tasks))
-                for task_i in order:
-                    task = tasks[task_i]
-                    if isinstance(task, str):
-                        if train_meta:
-                            dataset = self.meta_dataset_cache[task]
-                            self.meta_train_step(dataset, meta_learning_rate)
-                    else:
-                        str_task = _stringify_polynomial(task)
-                        memory_buffer = self.memory_buffers[str_task]
-                        if train_base:
-                            self.base_train_step(memory_buffer, learning_rate)
-                        if train_language:
-                            intified_task = self.task_to_ints[str_task]
-                            if intified_task is not None:
-                                self.base_language_train_step(
-                                    intified_task, memory_buffer,
-                                    language_learning_rate)
-
-
-                if epoch % save_every == 0:
-                    s_epoch  = "%i, " % epoch
-                    _, base_losses = self.run_base_eval(
-                        include_new=include_new)
-                    _, meta_losses = self.run_meta_loss_eval(
-                        include_new=include_new)
-                    _, meta_true_losses = self.run_meta_true_eval(
-                        include_new=include_new)
-                    curr_losses = s_epoch + (loss_format % tuple(
-                        base_losses + meta_losses))
-                    curr_meta_true = s_epoch + (meta_true_format % tuple(meta_true_losses))
-                    fout.write(curr_losses)
-                    fout_meta.write(curr_meta_true)
-                    if train_language:
-                        (_, base_lang_losses) = self.run_base_language_eval(
-                            include_new=include_new)
-                        curr_lang_losses = s_epoch + (lang_loss_format % tuple(
-                            base_lang_losses))
-                        fout_lang.write(curr_lang_losses)
-                        print(curr_losses, curr_lang_losses)
-                        if np.all(curr_losses < early_stopping_thresh) and np.all(curr_lang_losses < early_stopping_thresh):
-                            print("Early stop!")
-                            break
-                    else:
-                        print(curr_losses)
-                        if np.all(curr_losses < early_stopping_thresh):
-                            print("Early stop!")
-                            break
-
-
-                if epoch % lr_decays_every == 0 and epoch > 0:
-                    if learning_rate > min_learning_rate:
-                        learning_rate *= lr_decay
-
-                    if meta_learning_rate > min_meta_learning_rate:
-                        meta_learning_rate *= meta_lr_decay
-
-                    if train_language and language_learning_rate > min_language_learning_rate:
-                        language_learning_rate *= language_lr_decay
-
-
-            if config["sweep_meta_batch_sizes"] is not None:
-                with open(sweep_filename, "a") as fout_sweep:
-                    sweep_names, sweep_losses = self.run_base_eval(
-                        include_new=include_new, sweep_meta_batch_sizes=config["sweep_meta_batch_sizes"])
-                    for i, swept_batch_size in enumerate(config["sweep_meta_batch_sizes"]):
-                        swept_losses = s_epoch + ("%i, " % swept_batch_size) + (base_loss_format % tuple(sweep_losses[i]))
-                        fout_sweep.write(swept_losses)
-
-
-## running stuff
-
-for run_i in range(config["run_offset"], config["run_offset"]+config["num_runs"]):
-    np.random.seed(run_i)
-    tf.set_random_seed(run_i)
-    config["base_tasks"] = [poly_fam.sample_polynomial(coefficient_sd=config["poly_coeff_sd"]) for _ in range(config["num_base_tasks"])]
-    config["new_tasks"] = [poly_fam.sample_polynomial(coefficient_sd=config["poly_coeff_sd"]) for _ in range(config["num_new_tasks"])]
-    config["base_task_names"] = [x.to_symbols() for x in config["base_tasks"]] 
-    config["new_task_names"] = [x.to_symbols() for x in config["new_tasks"]] 
-                            
-# tasks implied by meta mappings, network will also be trained on these  
-    config["implied_base_tasks"] = [] 
-    config["implied_new_tasks"] = []
-
-    filename_prefix = config["output_dir"] + "run%i" % run_i
-    print("Now running %s" % filename_prefix)
-    _save_config(filename_prefix + "_config.csv", config)
-
-
-    model = meta_model(config)
-#    model.save_embeddings(filename=filename_prefix + "_init_embeddings.csv",
-#                          include_new=False)
-    if config["restore_checkpoint_path"] is not None:
-        model.restore_parameters(config["restore_checkpoint_path"] + "run%i" % run_i + "_guess_checkpoint")
-    else:
-        model.run_training(filename_prefix=filename_prefix,
-                           num_epochs=config["max_base_epochs"],
-                           include_new=False)
-#    cProfile.run('model.run_training(filename_prefix=filename_prefix, num_epochs=config["max_base_epochs"], include_new=False)')
-
-    model.save_parameters(filename_prefix + "_guess_checkpoint")
-#    model.save_embeddings(filename=filename_prefix + "_guess_embeddings.csv",
-#                          include_new=True)
-
-    model.run_training(filename_prefix=filename_prefix + "_new",
-                       num_epochs=config["max_new_epochs"],
-                       include_new=True)
-#    cProfile.run('model.run_training(filename_prefix=filename_prefix + "_new", num_epochs=config["max_new_epochs"], include_new=True)')
-    model.save_parameters(filename_prefix + "_final_checkpoint")
-
-#    model.save_embeddings(filename=filename_prefix + "_final_embeddings.csv",
-#                          include_new=True)
-
-    tf.reset_default_graph()

@@ -257,6 +257,116 @@ class polynomial(object):
         return self.family.poly_to_coeff_vec(self)
 
 
+def stringify_polynomial(p):
+    """Helper for printing, etc."""
+    return p.to_symbols(strip_spaces=True)
+
+
+number_regex = re.compile('-?[0-9]+\.[0-9][0-9]')
+
+
+def intify_polynomial(p):
+    """Helper for language inputs"""
+    symbs = p.to_symbols(strip_spaces=False)
+    symbs = re.sub("\+ -", "-", symbs)
+    symbs = symbs.split()
+    ints = []
+    for x in symbs:
+        if number_regex.match(x):
+            ints += [vocab_to_int[ch] for ch in list(x)]
+        else:
+            ints.append(vocab_to_int[x])
+    return ints
+
+
+def get_distinct_random_choices(values, num_choices_per, num_sets,
+                                replace=False):
+    sets = []
+    while len(sets) < num_sets:
+        candidate_set = set(np.random.choice(values, num_choices_per,
+                                             replace=replace))
+        if candidate_set not in sets:
+            sets.append(candidate_set)
+
+    return [np.random.permutation(list(s)) for s in sets]
+
+
+def get_meta_pairings(base_tasks, meta_tasks, meta_mappings, meta_binary_funcs):
+    """Gets which tasks map to which other tasks under the meta_tasks (i.e. the
+    part of the meta datasets which is precomputable)"""
+    all_meta_tasks = meta_tasks + meta_mappings + meta_binary_funcs
+    meta_pairings = {mt: [] for mt in all_meta_tasks}
+    implied_tasks = []
+    for mt in all_meta_tasks:
+        if mt == "square":
+            for poly in base_tasks:
+                if poly.my_max_degree**2 > poly.family.max_degree:
+                    continue
+                other = poly ** 2
+                implied_tasks.append(other)
+                meta_pairings[mt].append((stringifiy_polynomial(poly),
+                                          stringifiy_polynomial(other)))
+        elif mt[:3] == "add":
+            c = float(mt[4:])
+            for poly in base_tasks:
+                other = poly + c
+                implied_tasks.append(other)
+                meta_pairings[mt].append((stringifiy_polynomial(poly),
+                                          stringifiy_polynomial(other)))
+        elif mt[:4] == "mult":
+            c = float(mt[5:])
+            for poly in base_tasks:
+                other = poly * c
+                implied_tasks.append(other)
+                meta_pairings[mt].append((stringifiy_polynomial(poly),
+                                          stringifiy_polynomial(other)))
+        elif mt[:7] == "permute":
+            perm = [int(c) for c in mt[8:]]
+            for poly in base_tasks:
+                other = poly.permute_vars(perm)
+                implied_tasks.append(other)
+                meta_pairings[mt].append((stringifiy_polynomial(poly),
+                                          stringifiy_polynomial(other)))
+        elif mt == "is_constant_polynomial":
+            for poly in base_tasks:
+                truth_val = poly.my_max_degree == 0
+                meta_pairings[mt].append((stringifiy_polynomial(poly),
+                                          1*truth_val))
+        elif mt == "is_intercept_nonzero":
+            for poly in base_tasks:
+                truth_val = "1" in poly.coefficients and poly.coefficients["1"] != 0.
+                meta_pairings[mt].append((stringifiy_polynomial(poly),
+                                          1*truth_val))
+        elif mt[:3] == "is_":
+            var = mt.split("_")[1]
+            for poly in base_tasks:
+                truth_val = var in poly.relevant_variables
+                meta_pairings[mt].append((stringifiy_polynomial(poly),
+                                          1*truth_val))
+        elif mt[:6] == "binary":
+            operation = mt[7:]
+            if operation not in ["sum", "mult"]:
+                raise ValueError("Unknown meta task: %s" % meta_task)
+            pairings = get_distinct_random_choices(
+                values=base_tasks, num_choices_per=2,
+                num_sets=config["num_meta_binary_pairs"], replace=False)
+            for poly1, poly2 in pairings:
+                if operation == "sum":
+                    other = poly1 + poly2
+                elif operation == "mult":
+                    if poly1.my_max_degree + poly2.my_max_degree > poly1.family.max_degree:
+                        continue
+                    other = poly1 * poly2
+                implied_tasks.append(other)
+                meta_pairings[mt].append((stringifiy_polynomial(poly1),
+                                          stringifiy_polynomial(poly2),
+                                          stringifiy_polynomial(other)))
+
+        else:
+            raise ValueError("Unknown meta task: %s" % meta_task)
+
+    return meta_pairings, implied_tasks
+
 if __name__ == "__main__":
     p_fam = polynomial_family(3, 3)
 
