@@ -545,6 +545,13 @@ class HoMM_model(object):
         self.save_config(# TODO, save both configs
 
 
+    def get_new_memory_buffer(self):
+        """Can be overriden by child"""
+        return memory_buffer(self.run_config["memory_buffer_size"],
+                             self.run_config["input_shape"][0],
+                             self.run_config["output_shape"][0])
+
+
     def task_lookup(self, task):
         if isinstance(task, str):
             task_name = task
@@ -552,7 +559,7 @@ class HoMM_model(object):
             task_name = str(task)
 
         if task_name not in self.task_indices:
-            self.memory_buffers[task_name] = memory_buffer()
+            self.memory_buffers[task_name] = self.get_new_memory_buffer() 
             self.task_indices[task_name] = self.num_tasks
             self.num_tasks += 1
 
