@@ -94,15 +94,24 @@ def default_input_processor(input_ph, IO_num_hidden, z_dim, internal_nonlinearit
 
 def default_target_processor(targets, IO_num_hidden, z_dim, internal_nonlinearity):
     output_size = sum(tf.get_shape(targets)[1:])
-    target_processor_nontf = random_orthogonal(z_dim)[:, :output_size]
+    target_processor_nontf = random_orthogonal(z_dim)[:, :output_size + 1]
     target_processor = tf.get_variable('target_processor',
                                         shape=[num_hidden_hyper, output_size],
-                                        initializer=tf.constant_initializer(target_processor_nontf))
+                                        initializer=tf.constant_initializer(target_processor_nontf[:, :-1))
+    meta_class_processor = tf.get_variable('meta_class_processor',
+                                        shape=[num_hidden_hyper, output_size],
+                                        initializer=tf.constant_initializer(meta_class_processor_nontf[:, -1:))
+    
     processed_targets = tf.matmul(targets, tf.transpose(target_processor))
-    return processed_targets, target_processor
+    return processed_targets, target_processor, meta_class_processor
 
 
-def default_target_processor(output_embeddings, target_processor):
+def default_meta_class_processor(targets, meta_class_processor):
+    processed_targets = tf.matmul(targets, tf.transpose(meta_class_processor))
+    return processed_targets
+
+
+def default_output_processor(output_embeddings, target_processor):
     processed_outputs = tf.matmul(output_embeddings, target_processor)
     return processed_outputs 
 
@@ -157,16 +166,18 @@ class meta_model(object):
         if target_processor is None:
             target_processor = lambda x: default_target_processor(
                 x, IO_num_hidden, z_dim, internal_nonlinearity)
-            processed_targets, target_processor = target_processor(self.base_target_ph)
+            (processed_targets, target_processor_var,
+             meta_class_processor_var) = target_processor(self.base_target_ph)
         else:
-            if output_processor is None:
-                raise ValueError("You cannot use the default output processor "
-                                 "without the default target processor.")
+            if output_processor is None or meta_class_processor is None:
+                raise ValueError("You cannot use the default output or "
+                                 "meta_class processor without the default "
+                                 "target processor.")
             processed_targets = target_processor(self.base_target_ph)
 
         if output_processor is None:
             output_processor = lambda x: default_output_processor(
-                x, target_processor)
+                x, target_processor_var)
 
         ## Meta: (Input, Output) -> Z (function embedding)
         if config["persistent_task_reps"]:
@@ -180,14 +191,13 @@ class meta_model(object):
             #self.meta_input_2_ph = tf.placeholder(tf.float32, shape=[None, config["z_dim"]]) # for binary
             self.meta_target_ph = tf.placeholder(tf.float32, [None, config["z_dim"]])
 
-        # TODO: fix this
         self.meta_class_ph = tf.placeholder(tf.float32, shape=[None, 1]) # for meta classification tasks
+
+        if meta_class_processor is None:
+            meta_class_processor = lambda x: default_meta_class_processor(
+                x, meta_class_processor_var)
         
-        self.class_processor_nontf = all_target_processor_nontf[:, output_size:]
-        self.class_processor = tf.get_variable('class_processor',
-                                               shape=self.class_processor_nontf.shape,
-                                               initializer=tf.constant_initializer(self.class_processor_nontf))
-        processed_class = tf.matmul(self.meta_class_ph, tf.transpose(self.class_processor))
+        processed_class = meta_class_processor(self.meta_class_ph) 
 
         # function embedding "guessing" network / meta network
         # {(emb_in, emb_out), ...} -> emb
@@ -456,15 +466,15 @@ class meta_model(object):
 
         self.base_raw_output = _task_network(self.base_task_params,
                                              processed_input)
-        self.base_output = _output_mapping(self.base_raw_output)
+        self.base_output = output_processor(self.base_raw_output)
 
         self.base_lang_raw_output = _task_network(self.lang_task_params,
                                                  processed_input)
-        self.base_lang_output = _output_mapping(self.base_lang_raw_output)
+        self.base_lang_output = output_processor(self.base_lang_raw_output)
 
         self.base_raw_output_fed_emb = _task_network(self.fed_emb_task_params,
                                                      processed_input)
-        self.base_output_fed_emb = _output_mapping(self.base_raw_output_fed_emb)
+        self.base_output_fed_emb = output_processor(self.base_raw_output_fed_emb)
 
         self.meta_class_raw_output = _task_network(self.meta_class_task_params,
                                                    meta_input_embeddings)
