@@ -151,8 +151,60 @@ class HoMM_model(object):
         for task in self.base_train + self.base_eval:
             self.base_task_lookup(task)
 
-        for task in self.meta_class_train + self.meta_class_eval + self.meta_map_train + self.meta_map_eval:
-            self.meta_task_lookup(task)
+        all_meta_tasks = self.meta_class_train + self.meta_class_eval + self.meta_map_train + self.meta_map_eval
+        for mt in all_meta_tasks:
+            self.meta_task_lookup(mt)
+
+        for mts, meta_class in zip([self.meta_class_train + self.meta_class_eval,
+                                      self.meta_map_train + self.meta_map_eval],
+                                     [True, False]):
+            out_dtype = np.float32 if meta_class else np.int32
+            for mt in mts:
+                self.meta_dataset[mt] = {} 
+
+                train_pairings = self.meta_pairings[mt]["train"]
+                num_train = len(train_pairings)
+                eval_pairings = self.meta_pairings[mt]["eval"]
+                num_eval = len(eval_pairings)
+
+                self.meta_dataset_cache[mt]["tr"] = {}
+                self.meta_dataset_cache[mt]["ev"] = {}
+                self.meta_dataset_cache[mt]["tr"]["in"] = np.zeros(
+                    [num_train, ], dtype=np.int32)
+                self.meta_dataset_cache[mt]["tr"]["out"] = np.zeros(
+                    [num_train, ], dtype=out_dtype)
+
+                self.meta_dataset_cache[mt]["ev"]["in"] = np.zeros(
+                    [num_train + num_eval], dtype=np.int32)
+                self.meta_dataset_cache[mt]["ev"]["out"] = np.zeros(
+                    [num_train + num_eval], dtype=out_dtype)
+                eval_guess_mask = np.concatenate([np.ones([num_train],
+                                                          dtype=np.bool),
+                                                  np.zeros([num_eval],
+                                                           dtype=np.bool)])
+
+                self.meta_dataset_cache[mt]["ev"]["gm"] = eval_guess_mask
+
+                for i, (e, res) in enumerate(train_pairings):
+                    e_index = self.environment_indices[e]
+                    self.meta_dataset_cache[mt]["tr"]["in"][i] = e_index
+                    if meta_class:
+                        self.meta_dataset_cache[mt]["tr"]["out"][i] = res
+                    else:
+                        res_index = self.environment_indices[res]
+                        self.meta_dataset_cache[mt]["tr"]["out"][i] = res_index
+
+                self.meta_dataset_cache[mt]["ev"]["in"][:num_train] = self.meta_dataset_cache[mt]["tr"]["in"]
+                self.meta_dataset_cache[mt]["ev"]["out"][:num_train] = self.meta_dataset_cache[mt]["tr"]["out"]
+
+                for i, (e, res) in enumerate(eval_pairings):
+                    e_index = self.environment_indices[e]
+                    self.meta_dataset_cache[mt]["ev"]["in"][num_train + i] = e_index
+                    if meta_class:
+                        self.meta_dataset_cache[mt]["ev"]["out"][num_train + i] = res
+                    else:
+                        res_index = self.environment_indices[res]
+                        self.meta_dataset_cache[mt]["ev"]["out"][num_train + i] = res_index
 
     def _post_build_calls(self):
         """Can be overridden to do something after building, before session."""
