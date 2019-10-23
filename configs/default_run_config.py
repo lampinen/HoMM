@@ -1,3 +1,3 @@
-default_architecture_config = {
+default_run_config = {
     "train_language": False,
 }

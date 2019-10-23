@@ -1,13 +1,18 @@
-import ..HoMM 
 from polynomials import *
 from itertools import permutations
 
-run_config = {
+import ..HoMM 
+from ..configs.default_run_config import default_run_config
+
+run_config = default_run_config.update({
     "output_dir": "results/",
+    
     "memory_buffer_size": 1024, # How many points for each polynomial are stored
     "meta_batch_size": 50, # how many meta-learner sees
-    "early_stopping_thresh": 0.05,
     "num_base_tasks": 60, # prior to meta-augmentation
+
+    "num_variables": 4,
+    "max_degree": 2,
     "num_new_tasks": 40,
     "poly_coeff_sd": 2.5,
     "point_val_range": 1,
@@ -16,31 +21,38 @@ run_config = {
     "meta_mult_vals": [-3, -1, 3],
     "new_meta_tasks": [],
     "new_meta_mappings": ["add_%f" % 2., "add_%f" % -2., "mult_%f" % 2., "mult_%f" % -2.],
-}
+})
 
 class poly_HoMM_model(HoMM.HoMM_model):
-    def __init__(self, run_config=None, architecture_config=None, input_processor=None
-                 output_processor=None, base_loss=None, meta_loss=None):
-        super(poly_HoMM_model, self).__init__()
+    def __init__(self, run_config=None):
+        super(poly_HoMM_model, self).__init__(run_config=run_config)
+
+    def _pre_build_calls(self):
+        # set up the base tasks
         self.poly_fam = polynomial_family(config["num_variables"], config["max_degree"])
         self.run_config["variables"] = poly_fam.variables
 
-        self.run_config["base_meta_tasks"] = ["is_constant_polynomial"] + ["is_intercept_nonzero"] + ["is_%s_relevant" % var for var in self.run_config["variables"]]
+        self.run_config["meta_class_train"] = ["is_constant_polynomial"] + ["is_intercept_nonzero"] + ["is_%s_relevant" % var for var in self.run_config["variables"]]
 
         self.run_config["base_meta_mappings"] = ["square"] + ["add_%f" % c for c in self.run_config["meta_add_vals"]] + ["mult_%f" % c for c in self.run_config["meta_mult_vals"]]
         permutation_mappings = ["permute_" + "".join([str(x) for x in p]) for p in permutations(range(self.run_config["num_variables"]))]
         np.random.seed(0)
         np.random.shuffle(permutation_mappings)
-        self.run_config["base_meta_mappings"] += permutation_mappings[:len(permutation_mappings)//2]
+        self.run_config["train_meta_mappings"] += permutation_mappings[:len(permutation_mappings)//2]
         self.run_config["new_meta_mappings"] += permutation_mappings[len(permutation_mappings)//2:]
 
         self.run_config["base_meta_tasks"] = [x for x in self.run_config["base_meta_tasks"] if x not in self.run_config["new_meta_tasks"]]
         self.run_config["meta_mappings"] = [x for x in self.run_config["base_meta_mappings"] if x not in self.run_config["new_meta_mappings"]]
 
-        vocab = ['PAD'] + [str(x) for x in range(10)] + [".", "+", "-", "^"] + poly_fam.variables
-        vocab_to_int = dict(zip(vocab, range(len(vocab))))
+        # set up language
 
-        self.run_config["vocab"] = vocab
+        #vocab = ['PAD'] + [str(x) for x in range(10)] + [".", "+", "-", "^"] + poly_fam.variables
+        #vocab_to_int = dict(zip(vocab, range(len(vocab))))
+        #
+        #self.run_config["vocab"] = vocab
+
+        # set up the meta_task generator
+
 
     def fill_buffers(self, num_data_points=1, include_new=False):
         """Add new "experiences" to memory buffers."""

@@ -105,18 +105,29 @@ def save_config(filename, config):
 
 class HoMM_model(object):
     """A base Homoiconic Meta-mapping model."""
-    def __init__(self, run_config):
+    def __init__(self, run_config, architecture_config=None,
+                 input_processor=None, output_processor=None,
+                 base_loss=None, meta_loss=None):
         """Set up data structures, build the network.
         
         The child classes should call this with a super call, overriding the
-        _pre_ and _post_build_calls methods if necessary.
+        _pre_ and _post_build_calls methods as necessary. In particular, the
+        _pre_build_calls function should be used to add any
         """
-        self.num_tasks = 0
-        self.memory_buffers = {}
-        self.task_indices = {}
-        self.run_config = {} 
+        self.run_config = run_config
 
-        self._pre_build_calls()
+        self.num_tasks = 0
+        self.base_train = [] 
+        self.base_eval = [] 
+        self.meta_class_train = []
+        self.meta_class_eval = []
+        self.meta_map_train = []
+        self.meta_map_eval = []
+
+        self._pre_build_calls()  # tasks should be added to lists here
+
+        self._task_processing()
+
         self._build_architecture(
             self, architecture_config=None, input_processor=None
             output_processor=None, base_loss=None, meta_loss=None)
@@ -125,8 +136,21 @@ class HoMM_model(object):
 
 
     def _pre_build_calls(self):
-        """Can be overridden to do something before building the net."""
-        pass
+        """Should be overridden to do something before building the net."""
+        raise NotImplementedError("You must override the _pre_build_calls "
+                                  "method to add your base and meta tasks.")
+
+
+    def _task_processing(self):
+        """Create the memory buffers, etc. for the tasks."""
+        self.memory_buffers = {}
+        self.meta_datasets = {}
+        self.task_indices = {}
+        for task in self.base_train + self.base_eval:
+            self.base_task_lookup(task)
+
+        for task in self.meta_class_train + self.meta_class_eval + self.meta_map_train + self.meta_map_eval:
+            self.meta_task_lookup(task)
 
     def _post_build_calls(self):
         """Can be overridden to do something after building, before session."""
