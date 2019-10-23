@@ -1,3 +1,5 @@
+import tensorflow as tf
+
 default_architecture_config = {
    "input_shape": [4],
    "output_shape": [1],
@@ -11,6 +13,7 @@ default_architecture_config = {
    "IO_num_hidden": 128,
    "task_weight_weight_mult": 1.0,
    "persistent_task_reps": True,
+   "internal_nonlinearity": tf.nn.leaky_relu, 
    "output_nonlinearity": None,
    "lang_drop_prob": 0.0,
    "train_drop_prob": 0.0,

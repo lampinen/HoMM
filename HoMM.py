@@ -116,6 +116,14 @@ class HoMM_model(object):
         """
         self.run_config = run_config
 
+        # set up filenames
+        self.run_config["run_config"] = run_config["filename_prefix"] + "_run_config.csv"
+        self.run_config["architecture_config"] = run_config["filename_prefix"] + "_architecture_config.csv"
+        self.run_config["loss_filename"] = run_config["filename_prefix"] + "_losses.csv"
+        self.run_config["meta_filename"] = run_config["filename_prefix"] + "_meta_true_losses.csv"
+        self.run_config["lang_filename"] = run_config["filename_prefix"] + "_language_losses.csv"
+
+        # data structures to be
         self.num_tasks = 0
         self.base_train = [] 
         self.base_eval = [] 
@@ -126,10 +134,11 @@ class HoMM_model(object):
 
         self.meta_pairings = {}
 
+        # setup functions
         self._pre_build_calls()  # tasks should be added to lists here
-
         self._task_processing()
 
+        # network and init
         self._build_architecture(
             self, architecture_config=None, input_processor=None
             output_processor=None, base_loss=None, meta_loss=None)
@@ -781,7 +790,7 @@ class HoMM_model(object):
         self.sess.run(self.base_train, feed_dict=feed_dict)
 
 
-    def base_language_train_step(self, intified_task, lr):
+    def base_language_train_step(self, task, lr):
         feed_dict = self.build_feed_dict(task, lr=lr, call_type="base_lang_train")
         self.sess.run(self.base_lang_train, feed_dict=feed_dict)
 
@@ -795,7 +804,6 @@ class HoMM_model(object):
 
     def run_base_eval(self):
         """Run evaluation on basic tasks."""
-        assert(False)  # actually the below should be moved to a run_all_eval function for efficiency
         if not self.run_config["persistent_task_reps"]:
             self.refresh_base_embeddings() # make sure we're up to date
 
@@ -880,7 +888,7 @@ class HoMM_model(object):
 
         return self.sess.run(fetch, feed_dict=feed_dict)
 
-    def meta_true_eval_step(self, meta_mapping):
+    def meta_true_eval_step(self, meta_mapping, meta_mapping_train_or_eval):
         meta_dataset = self.meta_datasets[meta_mapping]["eval"]
 
         feed_dict = self.build_feed_dict(meta_mapping,
@@ -891,25 +899,30 @@ class HoMM_model(object):
         names = []
         i = 0
         for train_or_eval in ["train", "eval"]:
-            for (, (task, other)) in enumerate(
-                    self.meta_pairings[meta_mapping][train_or_eval]):
+            for (task, other) in self.meta_pairings[meta_mapping][train_or_eval]:
                 mapped_embedding = result_embeddings[i, :]
-                names.append(meta_mapping + ":" + task + "->" + other)
-                this_loss = self.base_embedding_eval(embedding=mapped_embedding, task=other)[0]
+
+                names.append(
+                    meta_mapping + ":metamapping_is_" + meta_mapping_train_or_eval + ":example_is_" + train_or_eval + ":" + task + "->" + other)
+                this_loss = self.base_embedding_eval(embedding=mapped_embedding,
+                                                     task=other)[0]
                 losses.append(this_loss)
                 i = i + 1
         return names, losses
     
-    def run_meta_true_eval(self, include_new=False):
+    def run_meta_true_eval(self):
         """Evaluates true meta loss, i.e. the accuracy of the model produced
            by the embedding output by the meta task"""
-        assert(False)  # again, must make sure that embeddings up to date if not persistent
         names = []
         losses = []
-        for meta_mapping in self.meta_map_train + self.meta_map_eval:
-            these_names, these_losses = self.meta_true_eval_step(meta_mapping) 
-            names += these_names
-            losses += these_losses
+        for these_meta_mappings, train_or_eval in zip([self.meta_map_train,
+                                                       self.meta_map_eval],
+                                                      ["train", "eval"]):
+            for meta_mapping in these_meta_mappings:
+                these_names, these_losses = self.meta_true_eval_step(
+                    meta_mapping, meta_mapping_train_or_eval) 
+                names += these_names
+                losses += these_losses
 
         return names, losses 
 
@@ -927,6 +940,110 @@ class HoMM_model(object):
     def restore_parameters(self, filename):
         self.saver.restore(self.sess, filename)
 
-    def run_training(self):
-        raise NotImplementedError("run_training() should be overridden by the child class!")
+    def run_eval(self, epoch, print_losses=True):
+        if not(self.architecture_config["persistent_task_embeddings"]):
+            self.update_base_task_embeddings()  # make sure we're up to date
+            self.update_meta_task_embeddings()
 
+        base_names, base_losses = self.run_base_eval()
+        meta_names, meta_losses = self.run_meta_loss_eval()
+
+        epoch_s = "%i, " % epoch
+        with open(self.run_config["loss_filename"], "w") as fout:
+            if epoch == 0:
+                fout.write("epoch, " + ", ".join(base_names + meta_names) + "\n")
+                self.loss_format = ", ".join(["%f" for _ in base_names + meta_names]) + "\n"
+
+            formatted_losses = epoch_s + (self.loss_format % tuple(
+                base_losses + meta_losses))
+            fout.write(formatted_losses)
+
+        if print_losses:
+            print(formatted_losses)
+
+        meta_true_names, meta_true_losses = self.run_meta_true_eval()
+
+        with open(self.run_config["meta_filename"], "w") as fout:
+            if epoch == 0:
+                fout.write("epoch, " + ", ".join(meta_true_names) + "\n")
+                self.meta_true_loss_format = ", ".join(["%f" for _ in meta_true_names]) + "\n"
+
+            formatted_losses = epoch_s + (self.meta_true_loss_format % tuple(
+                meta_true_losses))
+            fout.write(formatted_losses)
+
+        if self.run_config["train_language"]:
+            lang_names, lang_losses = self.run_lang_eval()
+
+            with open(self.run_config["lang_filename"], "w") as fout:
+                if epoch == 0:
+                    fout.write("epoch, " + ", ".join(lang_names) + "\n")
+                    self.loss_format = ", ".join(["%f" for _ in lang_names]) + "\n"
+
+                formatted_losses = epoch_s + (self.loss_format % tuple(
+                    lang_losses))
+                fout.write(formatted_losses)
+
+    def run_training(self):
+       """Train model."""
+        train_language = self.run_config["train_language"]
+        eval_every = self.run_config["eval_every"]
+        
+        learning_rate = self.run_config["init_learning_rate"]
+        language_learning_rate = self.run_config["init_language_learning_rate"]
+        meta_learning_rate = self.run_config["init_meta_learning_rate"]
+
+        save_every = self.run_config["save_every"]
+        early_stopping_thresh = self.run_config["early_stopping_thresh"]
+        lr_decays_every = self.run_config["lr_decays_every"]
+        lr_decay = self.run_config["lr_decay"]
+        meta_lr_decay = self.run_config["meta_lr_decay"]
+        min_learning_rate = self.run_config["min_learning_rate"]
+        min_meta_learning_rate = self.run_config["min_meta_learning_rate"]
+
+        if train_language:
+            language_lr_decay = self.run_config["language_lr_decay"]
+            min_language_learning_rate = self.run_config["min_language_learning_rate"]
+
+        self.fill_memory_buffers()
+
+        self.run_eval(epoch=0)
+
+        tasks = self.base_train + self.meta_class_train + self.meta_map_train
+        task_types = ["base"] * len(self.base_train) + ["meta_class"] * len(self.meta_class_train) + ["meta_map"] * len(self.meta_map_train)
+
+        for epoch in range(1, num_epochs+1):
+            if epoch % config["refresh_mem_buffs_every"] == 0:
+                self.fill_buffers()
+
+            order = np.random.permutation(len(tasks))
+            for task_i in order:
+                task = tasks[task_i]
+                task_type = task_types[task_i]
+                if task_type == "base":
+                    self.base_train_step(task, learning_rate)
+                    if train_language:
+                        self.base_lang_train_step(task,
+                                                  language_learning_rate)
+
+                elif task_type == "meta_class":
+                    self.meta_class_train_step(task, meta_learning_rate)
+                    if train_language:
+                        self.meta_class_lang_train_step(task, meta_learning_rate)
+                else: 
+                    self.meta_map_train_step(task, meta_learning_rate)
+                    if train_language:
+                        self.meta_map_lang_train_step(task, meta_learning_rate)
+
+            if epoch % eval_every == 0:
+                self.run_eval(epoch)
+
+            if epoch % lr_decays_every == 0 and epoch > 0:
+                if learning_rate > min_learning_rate:
+                    learning_rate *= lr_decay
+
+                if meta_learning_rate > min_meta_learning_rate:
+                    meta_learning_rate *= meta_lr_decay
+
+                if train_language and language_learning_rate > min_language_learning_rate:
+                    language_learning_rate *= language_lr_decay
