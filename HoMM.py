@@ -607,7 +607,8 @@ class HoMM_model(object):
         """Will need to be overridden"""
         raise NotImplementedError("intify task should be overridden by the child class!")
 
-    def build_feed_dict(self, task, lr=None, fed_embedding=None, call_type="base_train"):
+    def build_feed_dict(self, task, lr=None, fed_embedding=None,
+                        call_type="base_standard_train"):
         """Build a feed dict.
 
         This function should be overridden by the child class if the necessary.
@@ -616,13 +617,12 @@ class HoMM_model(object):
             task: the task def.
             lr: the learning rate if training.
             fed_embedding: embedding to use for performing the task, if any.
-            call_type: one of "base_standard_train", "base_standard_eval",
-                "base_lang_train", "base_lang_eval", "base_fed_eval",
-                "base_cached_eval", "metaclass_standard_train", 
-                "metamap_standard_train", "metaclass_cached_eval",
-                "metamap_cached_eval", "metaclass_lang_train", 
-                "metamap_lang_train", "metaclass_lang_eval", 
-                "metamap_lang_eval"
+            call_type: one of "base_standard_train", "base_lang_train",
+                "base_lang_eval", "base_fed_eval", "base_cached_eval",
+                "metaclass_standard_train", "metamap_standard_train", 
+                "metaclass_cached_eval", "metamap_cached_eval", 
+                "metaclass_lang_train", "metamap_lang_train", 
+                "metaclass_lang_eval", "metamap_lang_eval"
         """
         feed_dict = {}
 
@@ -667,46 +667,28 @@ class HoMM_model(object):
 
 
     def base_train_step(self, task, lr):
-        input_buff, output_buff = memory_buffer.get_memories()
-        feed_dict = {
-            self.base_input_ph: input_buff,
-            self.guess_input_mask_ph: self._random_guess_mask(self.memory_buffer_size),
-            self.base_target_ph: output_buff,
-            self.keep_prob_ph: self.tkp,
-            self.lr_ph: lr
-        }
+        feed_dict = self.build_feed_dict(task, lr=lr, call_type="base_standard_train")
         self.sess.run(self.base_train, feed_dict=feed_dict)
 
 
-    def base_language_train_step(self, intified_task, memory_buffer, lr):
-        input_buff, output_buff = memory_buffer.get_memories()
-        feed_dict = {
-            self.base_input_ph: input_buff,
-            self.language_input_ph: intified_task,
-            self.lang_keep_ph: self.lang_keep_prob,
-            self.base_target_ph: output_buff,
-            self.keep_prob_ph: self.tkp,
-            self.lr_ph: lr
-        }
+    def base_language_train_step(self, intified_task, lr):
+        feed_dict = self.build_feed_dict(task, lr=lr, call_type="base_lang_train")
         self.sess.run(self.base_lang_train, feed_dict=feed_dict)
 
 
     def base_eval(self, memory_buffer, meta_batch_size=None):
-        input_buff, output_buff = memory_buffer.get_memories()
-        feed_dict = {
-            self.base_input_ph: input_buff,
-            self.guess_input_mask_ph: self._random_guess_mask(
-                self.memory_buffer_size, meta_batch_size=meta_batch_size),
-            self.base_target_ph: output_buff,
-            self.keep_prob_ph: 1.
-        }
-        fetches = [self.total_base_loss]
+        feed_dict = self.build_feed_dict(task, lr=lr, call_type="base_cached_eval")
+        fetches = [self.total_base_cached_emb_loss]
         res = self.sess.run(fetches, feed_dict=feed_dict)
         return res
 
 
     def run_base_eval(self, include_new=False, sweep_meta_batch_sizes=False):
         """sweep_meta_batch_sizes: False or a list of meta batch sizes to try"""
+        assert(False)  # actually this should be moved to a run_all_eval function for efficiency
+        if not self.run_config["persistent_task_reps"]:
+            self.refresh_base_embeddings() # make sure we're up to date
+
         if include_new:
             tasks = self.all_base_tasks_with_implied
         else:
