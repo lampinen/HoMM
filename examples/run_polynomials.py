@@ -33,22 +33,22 @@ class poly_HoMM_model(HoMM.HoMM_model):
         poly_fam = polynomials.polynomial_family(config["num_variables"], config["max_degree"])
         self.run_config["variables"] = poly_fam.variables
 
-        self.run_config["base_train"] = [poly_fam.sample_polynomial(coefficient_sd=config["poly_coeff_sd"]) for _ in range(self.run_config["num_base_train_tasks"])]
-        self.run_config["base_eval"] = [poly_fam.sample_polynomial(coefficient_sd=config["poly_coeff_sd"]) for _ in range(self.run_config["num_base_eval_tasks"])]
+        self.base_train = [poly_fam.sample_polynomial(coefficient_sd=config["poly_coeff_sd"]) for _ in range(self.run_config["num_base_train_tasks"])]
+        self.base_eval = [poly_fam.sample_polynomial(coefficient_sd=config["poly_coeff_sd"]) for _ in range(self.run_config["num_base_eval_tasks"])]
 
         # set up the meta tasks
 
-        self.run_config["meta_class_train"] = ["is_constant_polynomial"] + ["is_intercept_nonzero"] + ["is_%s_relevant" % var for var in self.run_config["variables"]]
+        self.meta_class_train = ["is_constant_polynomial"] + ["is_intercept_nonzero"] + ["is_%s_relevant" % var for var in self.run_config["variables"]]
+        self.meta_class_eval = [] 
 
-        self.run_config["base_meta_mappings"] = ["square"] + ["add_%f" % c for c in self.run_config["meta_add_vals"]] + ["mult_%f" % c for c in self.run_config["meta_mult_vals"]]
+        self.meta_map_train = ["square"] + ["add_%f" % c for c in self.run_config["meta_add_vals"]] + ["mult_%f" % c for c in self.run_config["meta_mult_vals"]]
+        self.meta_map_eval = self.run_config["new_meta_mappings"] 
+
         permutation_mappings = ["permute_" + "".join([str(x) for x in p]) for p in permutations(range(self.run_config["num_variables"]))]
         np.random.seed(0)
         np.random.shuffle(permutation_mappings)
-        self.run_config["train_meta_mappings"] += permutation_mappings[:len(permutation_mappings)//2]
-        self.run_config["new_meta_mappings"] += permutation_mappings[len(permutation_mappings)//2:]
-
-        self.run_config["base_meta_tasks"] = [x for x in self.run_config["base_meta_tasks"] if x not in self.run_config["new_meta_tasks"]]
-        self.run_config["meta_mappings"] = [x for x in self.run_config["base_meta_mappings"] if x not in self.run_config["new_meta_mappings"]]
+        self.meta_map_train += permutation_mappings[:len(permutation_mappings)//2]
+        self.meta_map_eval += permutation_mappings[len(permutation_mappings)//2:]
 
         # set up language
 

@@ -145,16 +145,29 @@ class HoMM_model(object):
 
     def _task_processing(self):
         """Create the memory buffers, etc. for the tasks."""
-        self.memory_buffers = {}
-        self.meta_datasets = {}
+        
+        # update config
+        self.run_config["base_train"] = self.base_train
+        self.run_config["base_eval"] = self.base_eval
+        self.run_config["meta_class_train"] = self.meta_class_train
+        self.run_config["meta_class_eval"] = self.meta_class_eval
+        self.run_config["meta_map_train"] = self.meta_map_train
+        self.run_config["meta_map_eval"] = self.meta_map_eval
+
         self.task_indices = {}
+        # create buffers for base tasks
+        self.memory_buffers = {}
         for task in self.base_train + self.base_eval:
             self.base_task_lookup(task)
 
+
+        # create structures for meta tasks
+        self.meta_datasets = {}
         all_meta_tasks = self.meta_class_train + self.meta_class_eval + self.meta_map_train + self.meta_map_eval
         for mt in all_meta_tasks:
             self.meta_task_lookup(mt)
 
+        # populate meta-task structures
         for mts, meta_class in zip([self.meta_class_train + self.meta_class_eval,
                                       self.meta_map_train + self.meta_map_eval],
                                      [True, False]):
@@ -602,10 +615,10 @@ class HoMM_model(object):
         self.total_base_cached_emb_loss = base_loss(
             self.base_cached_emb_output, self.base_target_ph) 
 
-        self.total_meta_cached_emb_class_loss = meta_loss(
+        self.total_meta_class_cached_emb_loss = meta_loss(
             self.meta_cached_emb_raw_output, processed_class) 
 
-        self.total_meta_cached_emb_map_loss = meta_loss(
+        self.total_meta_map_cached_emb_loss = meta_loss(
             self.meta_map_output, meta_target_embeddings) 
 
         if persistent_task_reps: # Add the emb_match losses
@@ -701,7 +714,7 @@ class HoMM_model(object):
         """Will need to be overridden"""
         raise NotImplementedError("intify task should be overridden by the child class!")
 
-    def build_feed_dict(self, task, lr=None, fed_embedding=None,
+    def build_feed_dict(self, task, lr=None, fed_embedding=None, guess_mask=None,
                         call_type="base_standard_train"):
         """Build a feed dict.
 
@@ -727,14 +740,18 @@ class HoMM_model(object):
             inputs, outputs = self.sample_from_memory_buffer(memory_buffer0
             feed_dict[self.base_input_ph] = inputs
             feed_dict[self.base_target_ph] = outputs
-            feed_dict[self.guess_input_mask_ph] = self._random_guess_mask(
-                len(outputs))
+            if guess_mask is None:
+                guess_mask =  self._random_guess_mask(
+                    len(outputs))
+            feed_dict[self.guess_input_mask_ph] = guess_mask
         else: # meta call
             task_name, meta_dataset, task_index = self.meta_task_lookup(task)
             meta_input_indices = meta_dataset[train_or_eval]["in"],
             feed_dict[self.meta_input_indices_ph] = meta_input_indices
-            feed_dict[self.guess_input_mask_ph] = self._random_guess_mask(
-                len(meta_input_indices))
+            if guess_mask is None:
+                guess_mask = self._random_guess_mask(
+                    len(meta_input_indices))
+            feed_dict[self.guess_input_mask_ph] = guess_mask 
             meta_targets = meta_dataset[train_or_eval]["out"]
             if base_or_meta == "metamap":
                 feed_dict[self.meta_target_indices_ph] = meta_targets
@@ -756,7 +773,6 @@ class HoMM_model(object):
             if call_type == "lang":
                 feed_dict[self.lang_keep_prob_ph] = 1. 
 
-
         return feed_dict
 
 
@@ -771,7 +787,7 @@ class HoMM_model(object):
 
 
     def base_eval(self, task):
-        feed_dict = self.build_feed_dict(task, lr=lr, call_type="base_cached_eval")
+        feed_dict = self.build_feed_dict(task, call_type="base_cached_eval")
         fetches = [self.total_base_cached_emb_loss]
         res = self.sess.run(fetches, feed_dict=feed_dict)
         return res
@@ -779,179 +795,66 @@ class HoMM_model(object):
 
     def run_base_eval(self):
         """Run evaluation on basic tasks."""
-        assert(False)  # actually this should be moved to a run_all_eval function for efficiency
+        assert(False)  # actually the below should be moved to a run_all_eval function for efficiency
         if not self.run_config["persistent_task_reps"]:
             self.refresh_base_embeddings() # make sure we're up to date
 
-        tasks = 
+        base_tasks = self.base_train + self.base_eval 
 
         losses = [] 
-        if sweep_meta_batch_sizes:
-            for meta_batch_size in sweep_meta_batch_sizes:
-                this_losses = [] 
-                for task in tasks:
-                    task_str = _stringify_polynomial(task)
-                    memory_buffer = self.memory_buffers[task_str]
-                    res = self.base_eval(memory_buffer, 
-                                         meta_batch_size=meta_batch_size)
-                    this_losses.append(res[0])
-                losses.append(this_losses)
-        else:
-            for task in tasks:
-                task_str = _stringify_polynomial(task)
-                memory_buffer = self.memory_buffers[task_str]
-                res = self.base_eval(memory_buffer)
-                losses.append(res[0])
+        for task in base_tasks:
+            res = self.base_eval(task)
+            losses.append(res[0])
 
-        names = [_stringify_polynomial(t) for t in tasks]
+        names = [_stringify_polynomial(t) for t in base_tasks]
         return names, losses
         
 
-    def base_language_eval(self, intified_task, memory_buffer):
-        input_buff, output_buff = memory_buffer.get_memories()
-        feed_dict = {
-            self.base_input_ph: input_buff,
-            self.language_input_ph: intified_task,
-            self.base_target_ph: output_buff,
-            self.lang_keep_ph: 1.,
-            self.keep_prob_ph: 1.
-        }
+    def base_language_eval(self, task):
+        feed_dict = self.build_feed_dict(task, call_type="base_lang_eval")
         fetches = [self.total_base_lang_loss]
         res = self.sess.run(fetches, feed_dict=feed_dict)
         return res
 
-
-    def run_base_language_eval(self, include_new=False):
-        if include_new:
-            tasks = self.all_base_tasks_with_implied
-        else:
-            tasks = self.initial_base_tasks_with_implied
+    def run_base_language_eval(self):
+        base_tasks = self.base_train + self.base_eval 
 
         losses = [] 
         names = []
         for task in tasks:
-            task_str = _stringify_polynomial(task)
-            intified_task = self.task_to_ints[task_str]
-#            print(task_str)
-#            print(intified_task)
-            if intified_task is None:
-                continue
-            memory_buffer = self.memory_buffers[task_str]
-            res = self.base_language_eval(intified_task, memory_buffer)
+            res = self.base_language_eval(task)
             losses.append(res[0])
             names.append(task_str)
 
         return names, losses
 
-
-    def base_embedding_eval(self, embedding, memory_buffer):
-        input_buff, output_buff = memory_buffer.get_memories()
-        feed_dict = {
-            self.keep_prob_ph: 1.,
-            self.feed_embedding_ph: embedding,
-            self.base_input_ph: input_buff,
-            self.base_target_ph: output_buff
-        }
+    def base_embedding_eval(self, embedding, task):
+        feed_dict = self.build_feed_dict(task, feed_embedding=embedding, call_type="base_fed_eval")
         fetches = [self.total_base_fed_emb_loss]
         res = self.sess.run(fetches, feed_dict=feed_dict)
         return res
 
-    
-    def get_base_embedding(self, memory_buffer):
-        input_buff, output_buff = memory_buffer.get_memories()
-        feed_dict = {
-            self.keep_prob_ph: 1.,
-            self.base_input_ph: input_buff,
-            self.guess_input_mask_ph: np.ones([self.memory_buffer_size]),
-            self.base_target_ph: output_buff
-        }
+    def get_base_embedding(self, task):
+        feed_dict = self.build_feed_dict(task, call_type="base_standard_eval")
+        feed_dict[self.guess_input_mask_ph][:] = 1
         res = self.sess.run(self.guess_base_function_emb, feed_dict=feed_dict)
         return res
 
 
     def get_language_embedding(self, intified_task):
-        feed_dict = {
-            self.keep_prob_ph: 1.,
-            self.lang_keep_ph: 1.,
-            self.language_input_ph: intified_task
-        }
+        feed_dict = self.build_feed_dict(task, call_type="base_lang_eval")
         res = self.sess.run(self.language_function_emb, feed_dict=feed_dict)
         return res
 
-
-    def get_combined_embedding(self, t1_embedding, t2_embedding):
-        feed_dict = {
-            self.keep_prob_ph: 1.,
-            self.meta_input_ph: t1_embedding,
-            self.meta_input_2_ph: t2_embedding
-        }
-        res = self.sess.run(self.combined_meta_inputs, feed_dict=feed_dict)
-        return res
-
-
-    def get_meta_dataset(self, meta_task, include_new=False):
-        x_data = []
-        x2_data = []
-        y_data = []
-        if include_new:
-            this_base_tasks = self.meta_pairings_full[meta_task]
-        else:
-            this_base_tasks = self.meta_pairings_base[meta_task]
-        for this_tuple in this_base_tasks:
-            if len(this_tuple) == 3: # binary_func 
-                task, task2, other = this_tuple
-                task2_buffer = self.memory_buffers[task2]
-                x2_data.append(self.get_base_embedding(task2_buffer)[0, :])
-            else:
-                task, other = this_tuple
-            task_buffer = self.memory_buffers[task]
-            x_data.append(self.get_base_embedding(task_buffer)[0, :])
-            if other in [0, 1]:  # for classification meta tasks
-                y_data.append([other])
-            else:
-                other_buffer = self.memory_buffers[other]
-                y_data.append(self.get_base_embedding(other_buffer)[0, :])
-        if x2_data != []: # binary func
-            return {"x1": np.array(x_data), "x2": np.array(x2_data),
-                    "y": np.array(y_data)}
-        else:
-            return {"x": np.array(x_data), "y": np.array(y_data)}
-
-
-    def refresh_meta_dataset_cache(self, include_new=False):
-        meta_tasks = self.all_base_meta_tasks 
-        if include_new:
-            meta_tasks += self.all_new_meta_tasks 
-
-        for t in meta_tasks:
-            self.meta_dataset_cache[t] = self.get_meta_dataset(t, include_new)
-
-
-    def meta_loss_eval(self, meta_dataset):
-        feed_dict = {
-            self.keep_prob_ph: 1.,
-        }
-        y_data = meta_dataset["y"]
-        if y_data.shape[-1] == 1:
-            feed_dict[self.meta_class_ph] = y_data 
-            fetch = self.total_meta_t_loss
-        else:
-            feed_dict[self.meta_target_ph] = y_data 
-            fetch = self.total_meta_m_loss
-
-        if "x1" in meta_dataset: 
-            feed_dict[self.meta_input_ph] = meta_dataset["x1"]
-            feed_dict[self.meta_input_2_ph] = meta_dataset["x2"]
-            feed_dict[self.guess_input_mask_ph] =  np.ones([len(meta_dataset["x1"])])
-            fetch = self.total_meta_bf_loss
-        else:
-            feed_dict[self.meta_input_ph] = meta_dataset["x"]
-            feed_dict[self.guess_input_mask_ph] =  np.ones([len(meta_dataset["x"])])
-
-        return self.sess.run(fetch, feed_dict=feed_dict)
+    def meta_class_loss_eval(self, meta_task):
+        feed_dict = self.build_feed_dict(meta_task, call_type="meta_class_eval")
+        return self.sess.run(self.total_meta_class_cached_emb_loss, feed_dict=feed_dict)
         
+    def meta_map_loss_eval(self, meta_task):
+        feed_dict = self.build_feed_dict(meta_task, call_type="meta_map_eval")
+        return self.sess.run(self.total_meta_map_cached_emb_loss, feed_dict=feed_dict)
 
-    def run_meta_loss_eval(self, include_new=False):
+    def run_meta_loss_eval(self):
         meta_tasks = self.all_base_meta_tasks 
         if include_new:
             meta_tasks = self.all_meta_tasks 
