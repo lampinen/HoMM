@@ -124,6 +124,8 @@ class HoMM_model(object):
         self.meta_map_train = []
         self.meta_map_eval = []
 
+        self.meta_pairings = {}
+
         self._pre_build_calls()  # tasks should be added to lists here
 
         self._task_processing()

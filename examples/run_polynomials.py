@@ -1,19 +1,20 @@
-from polynomials import *
 from itertools import permutations
 
 import ..HoMM 
 from ..configs.default_run_config import default_run_config
+import polynomials
 
-run_config = default_run_config.update({
+run_config = default_run_config
+run_config.update({
     "output_dir": "results/",
     
     "memory_buffer_size": 1024, # How many points for each polynomial are stored
     "meta_batch_size": 50, # how many meta-learner sees
-    "num_base_tasks": 60, # prior to meta-augmentation
+    "num_base_train_tasks": 60, # prior to meta-augmentation
+    "num_base_eval_tasks": 40, # prior to meta-augmentation
 
     "num_variables": 4,
     "max_degree": 2,
-    "num_new_tasks": 40,
     "poly_coeff_sd": 2.5,
     "point_val_range": 1,
 
@@ -29,8 +30,13 @@ class poly_HoMM_model(HoMM.HoMM_model):
 
     def _pre_build_calls(self):
         # set up the base tasks
-        self.poly_fam = polynomial_family(config["num_variables"], config["max_degree"])
+        poly_fam = polynomials.polynomial_family(config["num_variables"], config["max_degree"])
         self.run_config["variables"] = poly_fam.variables
+
+        self.run_config["base_train"] = [poly_fam.sample_polynomial(coefficient_sd=config["poly_coeff_sd"]) for _ in range(self.run_config["num_base_train_tasks"])]
+        self.run_config["base_eval"] = [poly_fam.sample_polynomial(coefficient_sd=config["poly_coeff_sd"]) for _ in range(self.run_config["num_base_eval_tasks"])]
+
+        # set up the meta tasks
 
         self.run_config["meta_class_train"] = ["is_constant_polynomial"] + ["is_intercept_nonzero"] + ["is_%s_relevant" % var for var in self.run_config["variables"]]
 
@@ -51,14 +57,25 @@ class poly_HoMM_model(HoMM.HoMM_model):
         #
         #self.run_config["vocab"] = vocab
 
-        # set up the meta_task generator
+        # set up the meta pairings 
+        self.meta_pairings, implied_tasks_train, implied_tasks_eval = polynomials.get_meta_pairings(
+            base_train=self.run_config["base_train"],
+            base_eval=self.run_config["base_eval"],
+            meta_class_train=self.run_config["meta_class_train"],
+            meta_class_eval=self.run_config["meta_class_eval"],
+            meta_map_train=self.run_config["meta_map_train"],
+            meta_map_eval=self.run_config["meta_map_eval"]) 
+
+        # add the base tasks implied by the mappings
+        self.run_config["base_train"] += implied_tasks_train
+        self.run_config["base_eval"] += implied_tasks_eval
 
 
     def fill_buffers(self, num_data_points=1, include_new=False):
         """Add new "experiences" to memory buffers."""
         this_tasks = 
         for t in this_tasks:
-            buff = self.memory_buffers[_stringify_polynomial(t)]
+            buff = self.memory_buffers[polynomials.stringify_polynomial(t)]
             x_data = np.zeros([num_data_points, self.config["num_input"]])
             y_data = np.zeros([num_data_points, self.config["num_output"]])
             for point_i in range(num_data_points):
@@ -183,7 +200,7 @@ class poly_HoMM_model(HoMM.HoMM_model):
                             dataset = self.meta_dataset_cache[task]
                             self.meta_train_step(dataset, meta_learning_rate)
                     else:
-                        str_task = _stringify_polynomial(task)
+                        str_task = polynomials.stringify_polynomial(task)
                         memory_buffer = self.memory_buffers[str_task]
                         if train_base:
                             self.base_train_step(memory_buffer, learning_rate)
