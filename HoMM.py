@@ -106,15 +106,31 @@ def save_config(filename, config):
 class HoMM_model(object):
     """A base Homoiconic Meta-mapping model."""
     def __init__(self, run_config):
-        """Initialize the basics.
+        """Set up data structures, build the network.
         
-        The child classes should also add all the tasks in their __init__
-        method, and then call _build_architecture and _sess_and_init.
+        The child classes should call this with a super call, overriding the
+        _pre_ and _post_build_calls methods if necessary.
         """
         self.num_tasks = 0
         self.memory_buffers = {}
         self.task_indices = {}
         self.run_config = {} 
+
+        self._pre_build_calls()
+        self._build_architecture(
+            self, architecture_config=None, input_processor=None
+            output_processor=None, base_loss=None, meta_loss=None)
+        self._post_build_calls()
+        self._sess_and_init()
+
+
+    def _pre_build_calls(self):
+        """Can be overridden to do something before building the net."""
+        pass
+
+    def _post_build_calls(self):
+        """Can be overridden to do something after building, before session."""
+        pass
 
     def _build_architecture(self, architecture_config=None, input_processor=None
                             output_processor=None, base_loss=None, meta_loss=None):
@@ -676,23 +692,20 @@ class HoMM_model(object):
         self.sess.run(self.base_lang_train, feed_dict=feed_dict)
 
 
-    def base_eval(self, memory_buffer, meta_batch_size=None):
+    def base_eval(self, task):
         feed_dict = self.build_feed_dict(task, lr=lr, call_type="base_cached_eval")
         fetches = [self.total_base_cached_emb_loss]
         res = self.sess.run(fetches, feed_dict=feed_dict)
         return res
 
 
-    def run_base_eval(self, include_new=False, sweep_meta_batch_sizes=False):
-        """sweep_meta_batch_sizes: False or a list of meta batch sizes to try"""
+    def run_base_eval(self):
+        """Run evaluation on basic tasks."""
         assert(False)  # actually this should be moved to a run_all_eval function for efficiency
         if not self.run_config["persistent_task_reps"]:
             self.refresh_base_embeddings() # make sure we're up to date
 
-        if include_new:
-            tasks = self.all_base_tasks_with_implied
-        else:
-            tasks = self.initial_base_tasks_with_implied
+        tasks = 
 
         losses = [] 
         if sweep_meta_batch_sizes:

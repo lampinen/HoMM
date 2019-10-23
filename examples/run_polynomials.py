@@ -42,11 +42,6 @@ class poly_HoMM_model(HoMM.HoMM_model):
 
         self.run_config["vocab"] = vocab
 
-        self._build_architecture(
-            self, architecture_config=None, input_processor=None
-            output_processor=None, base_loss=None, meta_loss=None)
-        self._sess_and_init()
-
     def fill_buffers(self, num_data_points=1, include_new=False):
         """Add new "experiences" to memory buffers."""
         this_tasks = 
