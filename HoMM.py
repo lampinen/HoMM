@@ -180,44 +180,44 @@ class HoMM_model(object):
                 eval_pairings = self.meta_pairings[mt]["eval"]
                 num_eval = len(eval_pairings)
 
-                self.meta_dataset_cache[mt]["tr"] = {}
-                self.meta_dataset_cache[mt]["ev"] = {}
-                self.meta_dataset_cache[mt]["tr"]["in"] = np.zeros(
+                self.meta_datasets[mt]["train"] = {}
+                self.meta_datasets[mt]["eval"] = {}
+                self.meta_datasets[mt]["train"]["in"] = np.zeros(
                     [num_train, ], dtype=np.int32)
-                self.meta_dataset_cache[mt]["tr"]["out"] = np.zeros(
+                self.meta_datasets[mt]["train"]["out"] = np.zeros(
                     [num_train, ], dtype=out_dtype)
 
-                self.meta_dataset_cache[mt]["ev"]["in"] = np.zeros(
+                self.meta_datasets[mt]["eval"]["in"] = np.zeros(
                     [num_train + num_eval], dtype=np.int32)
-                self.meta_dataset_cache[mt]["ev"]["out"] = np.zeros(
+                self.meta_datasets[mt]["eval"]["out"] = np.zeros(
                     [num_train + num_eval], dtype=out_dtype)
                 eval_guess_mask = np.concatenate([np.ones([num_train],
                                                           dtype=np.bool),
                                                   np.zeros([num_eval],
                                                            dtype=np.bool)])
 
-                self.meta_dataset_cache[mt]["ev"]["gm"] = eval_guess_mask
+                self.meta_datasets[mt]["eval"]["gm"] = eval_guess_mask
 
                 for i, (e, res) in enumerate(train_pairings):
                     e_index = self.environment_indices[e]
-                    self.meta_dataset_cache[mt]["tr"]["in"][i] = e_index
+                    self.meta_datasets[mt]["train"]["in"][i] = e_index
                     if meta_class:
-                        self.meta_dataset_cache[mt]["tr"]["out"][i] = res
+                        self.meta_datasets[mt]["train"]["out"][i] = res
                     else:
                         res_index = self.environment_indices[res]
-                        self.meta_dataset_cache[mt]["tr"]["out"][i] = res_index
+                        self.meta_datasets[mt]["train"]["out"][i] = res_index
 
-                self.meta_dataset_cache[mt]["ev"]["in"][:num_train] = self.meta_dataset_cache[mt]["tr"]["in"]
-                self.meta_dataset_cache[mt]["ev"]["out"][:num_train] = self.meta_dataset_cache[mt]["tr"]["out"]
+                self.meta_datasets[mt]["eval"]["in"][:num_train] = self.meta_datasets[mt]["train"]["in"]
+                self.meta_datasets[mt]["eval"]["out"][:num_train] = self.meta_datasets[mt]["train"]["out"]
 
                 for i, (e, res) in enumerate(eval_pairings):
                     e_index = self.environment_indices[e]
-                    self.meta_dataset_cache[mt]["ev"]["in"][num_train + i] = e_index
+                    self.meta_datasets[mt]["eval"]["in"][num_train + i] = e_index
                     if meta_class:
-                        self.meta_dataset_cache[mt]["ev"]["out"][num_train + i] = res
+                        self.meta_datasets[mt]["eval"]["out"][num_train + i] = res
                     else:
                         res_index = self.environment_indices[res]
-                        self.meta_dataset_cache[mt]["ev"]["out"][num_train + i] = res_index
+                        self.meta_datasets[mt]["eval"]["out"][num_train + i] = res_index
 
     def _post_build_calls(self):
         """Can be overridden to do something after building, before session."""
@@ -650,7 +650,7 @@ class HoMM_model(object):
         self.sess.run(tf.global_variables_initializer())
         self.fill_buffers(num_data_points=self.run_config["memory_buffer_size"])
 
-        self.refresh_meta_dataset_cache()
+        self.refresh_meta_datasets()
        
         self.save_config(# TODO, save both configs
 
@@ -714,7 +714,7 @@ class HoMM_model(object):
         """Will need to be overridden"""
         raise NotImplementedError("intify task should be overridden by the child class!")
 
-    def build_feed_dict(self, task, lr=None, fed_embedding=None, guess_mask=None,
+    def build_feed_dict(self, task, lr=None, fed_embedding=None,
                         call_type="base_standard_train"):
         """Build a feed dict.
 
@@ -740,17 +740,17 @@ class HoMM_model(object):
             inputs, outputs = self.sample_from_memory_buffer(memory_buffer0
             feed_dict[self.base_input_ph] = inputs
             feed_dict[self.base_target_ph] = outputs
-            if guess_mask is None:
-                guess_mask =  self._random_guess_mask(
-                    len(outputs))
-            feed_dict[self.guess_input_mask_ph] = guess_mask
+            feed_dict[self.guess_input_mask_ph] = self._random_guess_mask(
+                len(outputs))
         else: # meta call
             task_name, meta_dataset, task_index = self.meta_task_lookup(task)
             meta_input_indices = meta_dataset[train_or_eval]["in"],
             feed_dict[self.meta_input_indices_ph] = meta_input_indices
-            if guess_mask is None:
+            if train_or_eval == "train":
                 guess_mask = self._random_guess_mask(
                     len(meta_input_indices))
+            else:
+                guess_mask = meta_dataset["eval"]["gm"]  # eval on the right tasks
             feed_dict[self.guess_input_mask_ph] = guess_mask 
             meta_targets = meta_dataset[train_or_eval]["out"]
             if base_or_meta == "metamap":
@@ -840,7 +840,6 @@ class HoMM_model(object):
         res = self.sess.run(self.guess_base_function_emb, feed_dict=feed_dict)
         return res
 
-
     def get_language_embedding(self, intified_task):
         feed_dict = self.build_feed_dict(task, call_type="base_lang_eval")
         res = self.sess.run(self.language_function_emb, feed_dict=feed_dict)
@@ -855,195 +854,78 @@ class HoMM_model(object):
         return self.sess.run(self.total_meta_map_cached_emb_loss, feed_dict=feed_dict)
 
     def run_meta_loss_eval(self):
-        meta_tasks = self.all_base_meta_tasks 
-        if include_new:
-            meta_tasks = self.all_meta_tasks 
-
         names = []
         losses = []
-        for t in meta_tasks:
-            meta_dataset = self.meta_dataset_cache[t]
-            if meta_dataset == {}: # new tasks aren't cached
-                meta_dataset = self.get_meta_dataset(t, include_new) 
-            loss = self.meta_loss_eval(meta_dataset)
-            names.append(t)
+        for meta_task, meta_class in zip([self.meta_class_train + self.meta_class_eval,
+                                          self.meta_map_train + self.meta_map_eval],
+                                         [True, False]:
+            if meta_class:
+                loss = self.meta_class_loss_eval(meta_task)
+            else:
+                loss = self.meta_map_loss_eval(meta_task)
+            names.append(meta_task)
             losses.append(loss)
 
         return names, losses
 
-
-    def get_meta_embedding(self, meta_dataset):
-        feed_dict = {
-            self.keep_prob_ph: 1.,
-            self.guess_input_mask_ph: np.ones([len(meta_dataset["x"])])
-        }
-        y_data = meta_dataset["y"]
-        if y_data.shape[-1] == 1:
-            feed_dict[self.meta_class_ph] = y_data 
-            fetch = self.guess_meta_t_function_emb
+    def get_meta_embedding(self, meta_task, meta_class):
+        """Note: cached base embeddings must be up to date!"""
+        call_type = "meta_class_eval" if meta_class else meta_map_eval
+        feed_dict = self.build_feed_dict(meta_task, call_type=call_type)
+        feed_dict[self.guess_input_mask_ph][:] = 1
+        if meta_class:
+            fetch = self.meta_class_guess_emb 
         else:
-            feed_dict[self.meta_target_ph] = y_data 
-            fetch = self.guess_meta_m_function_emb
-
-        if "x1" in meta_dataset: 
-            feed_dict[self.meta_input_ph] = meta_dataset["x1"]
-            feed_dict[self.meta_input_2_ph] = meta_dataset["x2"]
-            fetch = self.guess_meta_bf_function_emb
-        else:
-            feed_dict[self.meta_input_ph] = meta_dataset["x"]
+            fetch = self.meta_map_guess_emb 
 
         return self.sess.run(fetch, feed_dict=feed_dict)
 
+    def meta_true_eval_step(self, meta_mapping):
+        meta_dataset = self.meta_datasets[meta_mapping]["eval"]
 
-    def get_meta_outputs(self, meta_dataset, new_dataset=None):
-        """Get new dataset mapped according to meta_dataset, or just outputs
-        for original dataset if new_dataset is None"""
-        meta_class = meta_dataset["y"].shape[-1] == 1
-
-        if new_dataset is not None:
-            if "x" in meta_dataset:
-                this_x = np.concatenate([meta_dataset["x"], new_dataset["x"]], axis=0)
-                new_x = new_dataset["x"] 
-                this_mask = np.zeros(len(this_x), dtype=np.bool)
-                this_mask[:len(meta_dataset["x"])] = True # use only these to guess
-            else:
-                this_x1 = np.concatenate([meta_dataset["x1"], new_dataset["x1"]], axis=0)
-                this_x2 = np.concatenate([meta_dataset["x2"], new_dataset["x2"]], axis=0)
-                new_x = new_dataset["x1"] # for size only 
-                this_mask = np.zeros(len(this_x1), dtype=np.bool)
-                this_mask[:len(meta_dataset["x1"])] = True # use only these to guess
-
-            if meta_class:
-                this_y = np.concatenate([meta_dataset["y"], np.zeros([len(new_x)])], axis=0)
-            else:
-                this_y = np.concatenate([meta_dataset["y"], np.zeros_like(new_x)], axis=0)
-
-        else:
-            if "x" in meta_dataset:
-                this_x = meta_dataset["x"]
-                this_mask = np.ones(len(this_x), dtype=np.bool)
-            else:
-                this_x1 = meta_dataset["x1"]
-                this_x2 = meta_dataset["x2"]
-                this_mask = np.ones(len(this_x1), dtype=np.bool)
-            this_y = meta_dataset["y"]
-
-        feed_dict = {
-            self.keep_prob_ph: 1.,
-            self.guess_input_mask_ph: this_mask 
-        }
-        if meta_class:
-            feed_dict[self.meta_class_ph] = this_y 
-            this_fetch = self.meta_t_output 
-        else:
-            feed_dict[self.meta_target_ph] = this_y
-            this_fetch = self.meta_m_output 
-
-        if "x1" in meta_dataset: 
-            feed_dict[self.meta_input_ph] = this_x1 
-            feed_dict[self.meta_input_2_ph] = this_x2 
-            fetch = self.meta_bf_output
-        else:
-            feed_dict[self.meta_input_ph] = this_x 
-
-        res = self.sess.run(this_fetch, feed_dict=feed_dict)
-
-        if new_dataset is not None:
-            return res[len(meta_dataset["y"]):, :]
-        else:
-            return res
-
-
+        feed_dict = self.build_feed_dict(meta_mapping,
+                                         call_type="metamap_cached_eval")
+        result_embeddings = self.sess.run(self.meta_m_output,
+                                          feed_dict=feed_dict) 
+    
+        names = []
+        i = 0
+        for train_or_eval in ["train", "eval"]:
+            for (, (task, other)) in enumerate(
+                    self.meta_pairings[meta_mapping][train_or_eval]):
+                mapped_embedding = result_embeddings[i, :]
+                names.append(meta_mapping + ":" + task + "->" + other)
+                this_loss = self.base_embedding_eval(embedding=mapped_embedding, task=other)[0]
+                losses.append(this_loss)
+                i = i + 1
+        return names, losses
+    
     def run_meta_true_eval(self, include_new=False):
         """Evaluates true meta loss, i.e. the accuracy of the model produced
            by the embedding output by the meta task"""
-        if include_new:
-            meta_tasks = self.base_meta_mappings + self.new_meta_mappings
-            meta_pairings = self.meta_pairings_full
-        else:
-            meta_tasks = self.base_meta_mappings
-            meta_pairings = self.meta_pairings_base
-        meta_binary_funcs = self.base_meta_binary_funcs
-
+        assert(False)  # again, must make sure that embeddings up to date if not persistent
         names = []
         losses = []
-        for meta_task in meta_tasks:
-            meta_dataset = self.meta_dataset_cache[meta_task]
-            if meta_dataset == {}: # new tasks aren't cached
-                meta_dataset = self.get_meta_dataset(meta_task, include_new) 
-
-            for task, other in meta_pairings[meta_task]:
-                task_buffer = self.memory_buffers[task]
-                task_embedding = self.get_base_embedding(task_buffer)
-
-                other_buffer = self.memory_buffers[other]
-
-                mapped_embedding = self.get_meta_outputs(
-                    meta_dataset, {"x": task_embedding})
-
-                names.append(meta_task + ":" + task + "->" + other)
-                this_loss = self.base_embedding_eval(mapped_embedding, other_buffer)[0]
-                losses.append(this_loss)
-        for meta_task in meta_binary_funcs:
-            meta_dataset = self.meta_dataset_cache[meta_task]
-            for task1, task2, other in meta_pairings[meta_task]:
-                task1_buffer = self.memory_buffers[task1]
-                task1_embedding = self.get_base_embedding(task1_buffer)
-                task2_buffer = self.memory_buffers[task2]
-                task2_embedding = self.get_base_embedding(task2_buffer)
-
-                other_buffer = self.memory_buffers[other]
-
-                mapped_embedding = self.get_meta_outputs(
-                    meta_dataset, {"x1": task1_embedding,
-                                   "x2": task2_embedding})
-
-                names.append(meta_task + ":" + task1 + ":" + task2 + "->" + other)
-                this_loss = self.base_embedding_eval(mapped_embedding, other_buffer)[0]
-                losses.append(this_loss)
+        for meta_mapping in self.meta_map_train + self.meta_map_eval:
+            these_names, these_losses = self.meta_true_eval_step(meta_mapping) 
+            names += these_names
+            losses += these_losses
 
         return names, losses 
 
+    def meta_class_train_step(self, meta_task, meta_lr):
+        feed_dict = self.build_feed_dict(meta_task, lr=meta_lr, call_type="meta_class_train")
+        self.sess.run(self.meta_class_train, feed_dict=feed_dict)
 
-    def meta_train_step(self, meta_dataset, meta_lr):
-        if "y" not in meta_dataset:
-            print(meta_dataset)
-        y_data = meta_dataset["y"]
-        if "x" in meta_dataset:
-            feed_dict = {
-                self.keep_prob_ph: self.tkp,
-                self.meta_input_ph: meta_dataset["x"],
-                self.guess_input_mask_ph: np.ones([len(meta_dataset["x"])]),
-                self.lr_ph: meta_lr
-            }
-            meta_class = y_data.shape[-1] == 1
-            if meta_class:
-                feed_dict[self.meta_class_ph] = y_data
-                op = self.meta_t_train
-            else:
-                feed_dict[self.meta_target_ph] = y_data
-                op = self.meta_m_train
-        else:
-            feed_dict = {
-                self.keep_prob_ph: self.tkp,
-                self.meta_input_ph: meta_dataset["x1"],
-                self.meta_input_2_ph: meta_dataset["x2"],
-                self.guess_input_mask_ph: np.ones([len(meta_dataset["x1"])]),
-                self.lr_ph: meta_lr
-            }
-            feed_dict[self.meta_target_ph] = y_data
-            op = self.meta_bf_train
-
-        self.sess.run(op, feed_dict=feed_dict)
-
+    def meta_map_train_step(self, meta_task, meta_lr):
+        feed_dict = self.build_feed_dict(meta_task, lr=meta_lr, call_type="meta_map_train")
+        self.sess.run(self.meta_map_train, feed_dict=feed_dict)
 
     def save_parameters(self, filename):
         self.saver.save(self.sess, filename)
 
-
     def restore_parameters(self, filename):
         self.saver.restore(self.sess, filename)
-
 
     def run_training(self):
         raise NotImplementedError("run_training() should be overridden by the child class!")
