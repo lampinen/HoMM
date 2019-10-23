@@ -2,6 +2,8 @@ from __future__ import print_function
 from __future__ import absolute_import
 from __future__ import division
 
+from copy import deepcopy
+
 import numpy as np
 import tensorflow as tf
 import tensorflow.contrib.slim as slim
@@ -114,14 +116,16 @@ class HoMM_model(object):
         _pre_ and _post_build_calls methods as necessary. In particular, the
         _pre_build_calls function should be used to add any
         """
-        self.run_config = run_config
+        self.run_config = deepcopy(run_config)
+        self.architecture_config = deepcopy(architecture_config)
+        self.filename_prefix = "run%i_" % self.run_config["this_run"]
 
         # set up filenames
-        self.run_config["run_config"] = run_config["filename_prefix"] + "_run_config.csv"
-        self.run_config["architecture_config"] = run_config["filename_prefix"] + "_architecture_config.csv"
-        self.run_config["loss_filename"] = run_config["filename_prefix"] + "_losses.csv"
-        self.run_config["meta_filename"] = run_config["filename_prefix"] + "_meta_true_losses.csv"
-        self.run_config["lang_filename"] = run_config["filename_prefix"] + "_language_losses.csv"
+        self.run_config["run_config_filename"] = self.filename_prefix + "_run_config.csv"
+        self.run_config["architecture_config_filename"] = self.filename_prefix + "_architecture_config.csv"
+        self.run_config["loss_filename"] = self.filename_prefix + "_losses.csv"
+        self.run_config["meta_filename"] = self.filename_prefix + "_meta_true_losses.csv"
+        self.run_config["lang_filename"] = self.filename_prefix + "_language_losses.csv"
 
         # data structures to be
         self.num_tasks = 0
@@ -661,7 +665,9 @@ class HoMM_model(object):
 
         self.refresh_meta_datasets()
        
-        self.save_config(# TODO, save both configs
+        save_config(self.run_config["run_config_filename"], self.run_config) 
+        save_config(self.run_config["architecture_config_filename"],
+                    self.architecture_config) 
 
 
     def get_new_memory_buffer(self):
