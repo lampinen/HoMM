@@ -259,10 +259,13 @@ class polynomial(object):
     def to_coeff_vec(self):
         return self.family.poly_to_coeff_vec(self)
 
+    def __str__(self):
+        return self.to_symbols(strip_spaces=True)
+
 
 def stringify_polynomial(p):
     """Helper for printing, etc."""
-    return p.to_symbols(strip_spaces=True)
+    return str(p) 
 
 
 number_regex = re.compile('-?[0-9]+\.[0-9][0-9]')

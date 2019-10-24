@@ -12,8 +12,6 @@ run_config = default_run_config.default_run_config
 run_config.update({
     "output_dir": "polynomials_results/",
     
-    "memory_buffer_size": 1024, # How many points for each polynomial are stored
-    "meta_batch_size": 50, # how many meta-learner sees
     "num_base_train_tasks": 60, # prior to meta-augmentation
     "num_base_eval_tasks": 40, # prior to meta-augmentation
 
@@ -63,12 +61,12 @@ class poly_HoMM_model(HoMM_model.HoMM_model):
 
         # set up the meta pairings 
         self.meta_pairings, implied_tasks_train, implied_tasks_eval = polynomials.get_meta_pairings(
-            base_train=self.run_config["base_train"],
-            base_eval=self.run_config["base_eval"],
-            meta_class_train=self.run_config["meta_class_train"],
-            meta_class_eval=self.run_config["meta_class_eval"],
-            meta_map_train=self.run_config["meta_map_train"],
-            meta_map_eval=self.run_config["meta_map_eval"]) 
+            base_train=self.base_train,
+            base_eval=self.base_eval,
+            meta_class_train=self.meta_class_train,
+            meta_class_eval=self.meta_class_eval,
+            meta_map_train=self.meta_map_train,
+            meta_map_eval=self.meta_map_eval) 
 
         # add the base tasks implied by the mappings
         self.base_train += implied_tasks_train

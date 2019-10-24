@@ -10,6 +10,7 @@ import tensorflow.contrib.slim as slim
 import warnings
 
 from .configs import default_architecture_config
+from .etc.orthogonal_matrices import random_orthogonal
 
 
 class memory_buffer(object):
@@ -60,14 +61,14 @@ def default_input_processor(input_ph, IO_num_hidden, z_dim, internal_nonlinearit
 
 
 def default_target_processor(targets, IO_num_hidden, z_dim, internal_nonlinearity):
-    output_size = sum(tf.get_shape(targets)[1:])
+    output_size = targets.get_shape()[-1]
     target_processor_nontf = random_orthogonal(z_dim)[:, :output_size + 1]
     target_processor = tf.get_variable('target_processor',
-                                        shape=[num_hidden_hyper, output_size],
+                                        shape=[z_dim, output_size],
                                         initializer=tf.constant_initializer(target_processor_nontf[:, :-1]))
     meta_class_processor = tf.get_variable('meta_class_processor',
-                                        shape=[num_hidden_hyper, output_size],
-                                        initializer=tf.constant_initializer(meta_class_processor_nontf[:, -1:]))
+                                        shape=[z_dim, output_size],
+                                        initializer=tf.constant_initializer(target_processor_nontf[:, -1:]))
     
     processed_targets = tf.matmul(targets, tf.transpose(target_processor))
     return processed_targets, target_processor, meta_class_processor
@@ -106,7 +107,8 @@ def save_config(filename, config):
 class HoMM_model(object):
     """A base Homoiconic Meta-mapping model."""
     def __init__(self, run_config, architecture_config=None,
-                 input_processor=None, output_processor=None,
+                 input_processor=None, target_processor=None,
+                 output_processor=None, meta_class_processor=None,
                  base_loss=None, meta_loss=None):
         """Set up data structures, build the network.
         
@@ -114,6 +116,10 @@ class HoMM_model(object):
         _pre_ and _post_build_calls methods as necessary. In particular, the
         _pre_build_calls function should be used to add any
         """
+        if architecture_config is None:
+            architecture_config = default_architecture_config.default_architecture_config 
+        else:
+            architecture_config = architecture_config
         self.run_config = deepcopy(run_config)
         self.architecture_config = deepcopy(architecture_config)
         self.filename_prefix = "run%i_" % self.run_config["this_run"]
@@ -144,7 +150,9 @@ class HoMM_model(object):
         self._build_architecture(
             architecture_config=architecture_config, 
             input_processor=input_processor,
+            target_processor=target_processor,
             output_processor=output_processor,
+            meta_class_processor=meta_class_processor,
             base_loss=base_loss,
             meta_loss=meta_loss)
         self._post_build_calls()
@@ -174,7 +182,6 @@ class HoMM_model(object):
         for task in self.base_train + self.base_eval:
             self.base_task_lookup(task)
 
-
         # create structures for meta tasks
         self.meta_datasets = {}
         all_meta_tasks = self.meta_class_train + self.meta_class_eval + self.meta_map_train + self.meta_map_eval
@@ -187,7 +194,7 @@ class HoMM_model(object):
                                      [True, False]):
             out_dtype = np.float32 if meta_class else np.int32
             for mt in mts:
-                self.meta_dataset[mt] = {} 
+                self.meta_datasets[mt] = {} 
 
                 train_pairings = self.meta_pairings[mt]["train"]
                 num_train = len(train_pairings)
@@ -213,24 +220,24 @@ class HoMM_model(object):
                 self.meta_datasets[mt]["eval"]["gm"] = eval_guess_mask
 
                 for i, (e, res) in enumerate(train_pairings):
-                    e_index = self.environment_indices[e]
+                    e_index = self.task_indices[e]
                     self.meta_datasets[mt]["train"]["in"][i] = e_index
                     if meta_class:
                         self.meta_datasets[mt]["train"]["out"][i] = res
                     else:
-                        res_index = self.environment_indices[res]
+                        res_index = self.task_indices[res]
                         self.meta_datasets[mt]["train"]["out"][i] = res_index
 
                 self.meta_datasets[mt]["eval"]["in"][:num_train] = self.meta_datasets[mt]["train"]["in"]
                 self.meta_datasets[mt]["eval"]["out"][:num_train] = self.meta_datasets[mt]["train"]["out"]
 
                 for i, (e, res) in enumerate(eval_pairings):
-                    e_index = self.environment_indices[e]
+                    e_index = self.task_indices[e]
                     self.meta_datasets[mt]["eval"]["in"][num_train + i] = e_index
                     if meta_class:
                         self.meta_datasets[mt]["eval"]["out"][num_train + i] = res
                     else:
-                        res_index = self.environment_indices[res]
+                        res_index = self.task_indices[res]
                         self.meta_datasets[mt]["eval"]["out"][num_train + i] = res_index
 
     def _post_build_calls(self):
@@ -238,26 +245,23 @@ class HoMM_model(object):
         pass
 
     def _build_architecture(self, architecture_config, input_processor,
-                            output_processor, base_loss, meta_loss):
-        if architecture_config is None:
-            config = default_architecture_config.default_architecture_config 
-        else:
-            config = architecture_config
-        self.config = config
-        self.memory_buffer_size = config["memory_buffer_size"]
-        self.meta_batch_size = config["meta_batch_size"]
-        self.num_input = config["num_input"]
-        self.num_output = config["num_output"]
-        self.tkp = 1. - config["train_drop_prob"] # drop prob -> keep prob
-        self.vocab = config["vocab"]
-        self.vocab_size = len(self.vocab)
+                            target_processor, output_processor, 
+                            meta_class_processor, base_loss, meta_loss):
+        self.architecture_config = architecture_config
+        self.memory_buffer_size = architecture_config["memory_buffer_size"]
+        self.meta_batch_size = architecture_config["meta_batch_size"]
+        self.tkp = 1. - architecture_config["train_drop_prob"] # drop prob -> keep prob
+
+        if self.run_config["train_language"]:
+            self.vocab = architecture_config["vocab"]
+            self.vocab_size = len(self.vocab)
 
         # network
         var_scale_init = tf.contrib.layers.variance_scaling_initializer(factor=1., mode='FAN_AVG')
 
         # base task input (polynomials, need to refactor)
-        input_shape = config["input_shape"]
-        output_shape = config["output_shape"]
+        input_shape = architecture_config["input_shape"]
+        output_shape = architecture_config["output_shape"]
 
         self.base_input_ph = tf.placeholder(
             tf.float32, shape=[None] + input_shape)
@@ -267,12 +271,12 @@ class HoMM_model(object):
         self.lr_ph = tf.placeholder(tf.float32)
         self.keep_prob_ph = tf.placeholder(tf.float32) # dropout keep prob
 
-        F_num_hidden = config["F_num_hidden"]
-        IO_num_hidden = config["IO_num_hidden"]
-        num_hidden_hyper = config["H_num_hidden"]
-        z_dim = config["z_dim"]
-        internal_nonlinearity = config["internal_nonlinearity"]
-        output_nonlinearity = config["output_nonlinearity"]
+        F_num_hidden = architecture_config["F_num_hidden"]
+        IO_num_hidden = architecture_config["IO_num_hidden"]
+        num_hidden_hyper = architecture_config["H_num_hidden"]
+        z_dim = architecture_config["z_dim"]
+        internal_nonlinearity = architecture_config["internal_nonlinearity"]
+        output_nonlinearity = architecture_config["output_nonlinearity"]
 
         if input_processor is None:
             input_processor = lambda x: default_input_processor(
@@ -314,19 +318,19 @@ class HoMM_model(object):
         self.guess_input_mask_ph = tf.placeholder(tf.bool, shape=[None]) # which datapoints get excluded from the guess
 
         def _meta_network(embedded_inputs, embedded_targets,
-                          mask_ph=self.guess_input_mask_ph, reuse=True):
-            num_hidden_meta = config["M_num_hidden"]
+                          guess_mask=self.guess_input_mask_ph, reuse=True):
+            num_hidden_meta = architecture_config["M_num_hidden"]
             with tf.variable_scope('meta', reuse=reuse):
                 meta_input = tf.concat([embedded_inputs,
                                         embedded_targets], axis=-1)
                 meta_input = tf.boolean_mask(meta_input,
-                                             mask)
+                                             guess_mask)
 
                 mh_1 = slim.fully_connected(meta_input, num_hidden_meta,
                                             activation_fn=internal_nonlinearity)
                 mh_2 = slim.fully_connected(mh_1, num_hidden_meta,
                                             activation_fn=internal_nonlinearity)
-                if config["meta_max_pool"]:
+                if architecture_config["M_max_pool"]:
                     mh_2b = tf.reduce_max(mh_2, axis=0, keep_dims=True)
                 else:
                     mh_2b = tf.reduce_mean(mh_2, axis=0, keep_dims=True)
@@ -334,12 +338,12 @@ class HoMM_model(object):
                 mh_3 = slim.fully_connected(mh_2b, num_hidden_meta,
                                             activation_fn=internal_nonlinearity)
 
-                guess_embedding = slim.fully_connected(mh_3, config["z_dim"],
+                guess_embedding = slim.fully_connected(mh_3, architecture_config["z_dim"],
                                                        activation_fn=None)
                 return guess_embedding
 
 
-        self.base_guess_emb = _meta_network(processed_input,
+        self.base_guess_emb = _meta_network(self.processed_input,
                                             processed_targets,
                                             reuse=False)
 
@@ -377,64 +381,65 @@ class HoMM_model(object):
 
 
         ## language processing: lang -> Z
-        num_hidden_language = config["num_hidden_language"]
-        num_lstm_layers = config["num_lstm_layers"]
+        if self.run_config["train_language"]:
+            num_hidden_language = architecture_config["num_hidden_language"]
+            num_lstm_layers = architecture_config["num_lstm_layers"]
 
-        self.lang_keep_ph = lang_keep_ph = tf.placeholder(tf.float32)
-        self.lang_keep_prob = 1. - config["lang_drop_prob"]
-        self.language_input_ph = tf.placeholder(
-            tf.int32, shape=[1, self.max_sentence_len])
-        with tf.variable_scope("word_embeddings", reuse=False):
-            self.word_embeddings = tf.get_variable(
-                "embeddings", shape=[self.vocab_size, num_hidden_language])
-        self.embedded_language = tf.nn.embedding_lookup(self.word_embeddings,
-                                                        self.language_input_ph)
+            self.lang_keep_ph = lang_keep_ph = tf.placeholder(tf.float32)
+            self.lang_keep_prob = 1. - architecture_config["lang_drop_prob"]
+            self.language_input_ph = tf.placeholder(
+                tf.int32, shape=[1, self.max_sentence_len])
+            with tf.variable_scope("word_embeddings", reuse=False):
+                self.word_embeddings = tf.get_variable(
+                    "embeddings", shape=[self.vocab_size, num_hidden_language])
+            self.embedded_language = tf.nn.embedding_lookup(self.word_embeddings,
+                                                            self.language_input_ph)
 
-        def _language_network(embedded_language, reuse=True):
-            """Maps from language to a function embedding"""
-            with tf.variable_scope("language_processing"):
-                cells = [tf.nn.rnn_cell.LSTMCell(
-                    num_hidden_language) for _ in range(num_lstm_layers)]
-                stacked_cell = tf.nn.rnn_cell.MultiRNNCell(cells)
+            def _language_network(embedded_language, reuse=True):
+                """Maps from language to a function embedding"""
+                with tf.variable_scope("language_processing"):
+                    cells = [tf.nn.rnn_cell.LSTMCell(
+                        num_hidden_language) for _ in range(num_lstm_layers)]
+                    stacked_cell = tf.nn.rnn_cell.MultiRNNCell(cells)
 
-                state = stacked_cell.zero_state(1, dtype=tf.float32)
+                    state = stacked_cell.zero_state(1, dtype=tf.float32)
 
-                for i in range(self.max_sentence_len):
-                    this_input = embedded_language[:, i, :]
-                    this_input = tf.nn.dropout(this_input,
+                    for i in range(self.max_sentence_len):
+                        this_input = embedded_language[:, i, :]
+                        this_input = tf.nn.dropout(this_input,
+                                                   lang_keep_ph)
+                        cell_output, state = stacked_cell(this_input, state)
+
+                    cell_output = tf.nn.dropout(cell_output,
                                                lang_keep_ph)
-                    cell_output, state = stacked_cell(this_input, state)
+                    language_hidden = slim.fully_connected(
+                        cell_output, num_hidden_language,
+                        activation_fn=internal_nonlinearity)
 
-                cell_output = tf.nn.dropout(cell_output,
-                                           lang_keep_ph)
-                language_hidden = slim.fully_connected(
-                    cell_output, num_hidden_language,
-                    activation_fn=internal_nonlinearity)
+                    language_hidden = tf.nn.dropout(language_hidden,
+                                               lang_keep_ph)
 
-                language_hidden = tf.nn.dropout(language_hidden,
-                                           lang_keep_ph)
+                    func_embeddings = slim.fully_connected(language_hidden,
+                                                           num_hidden_hyper,
+                                                           activation_fn=None)
+                return func_embeddings
 
-                func_embeddings = slim.fully_connected(language_hidden,
-                                                       num_hidden_hyper,
-                                                       activation_fn=None)
-            return func_embeddings
-
-        self.language_function_emb = _language_network(self.embedded_language,
-                                                       False)
+            self.language_function_emb = _language_network(self.embedded_language,
+                                                           False)
 
         ## persistent/cached embeddings
-        # if not config["persistent_task_reps"], these will just be updated
+        # if not architecture_config["persistent_task_reps"], these will just be updated
         # manually. Either way, they are used for eval + meta tasks.
         with tf.variable_scope("persistent_cached"):
             self.persistent_embeddings = tf.get_variable(
                 "cached_task_embeddings",
-                [self.total_num_tasks,
-                 config["z_dim"]],
+                [self.num_tasks,
+                 architecture_config["z_dim"]],
                 dtype=tf.float32)
 
             self.update_persistent_embeddings_ph = tf.placeholder(
                 tf.float32,
-                [None, config["z_dim"]])
+                [None, architecture_config["z_dim"]])
 
             self.update_embeddings = tf.scatter_nd_update(
                 self.persistent_embeddings,
@@ -447,7 +452,10 @@ class HoMM_model(object):
             return tf.nn.embedding_lookup(persistent_embs,
                                           task_indices)
 
-        if config["persistent_task_reps"]:
+        self.lookup_cached_emb = _get_persistent_embeddings(
+            self.task_index_ph)
+
+        if architecture_config["persistent_task_reps"]:
             def _get_combined_embedding_and_match_loss(guess_embedding, task_index,
                                                        guess_weight,
                                                        target_net=False):
@@ -457,17 +465,14 @@ class HoMM_model(object):
                     guess_weight = tf.random_uniform([], dtype=tf.float32)
 
                 combined_embedding = guess_weight * guess_embedding + (1. - guess_weight) * cached_embedding
-                emb_match_loss = config["emb_match_loss_weight"] * tf.nn.l2_loss(
+                emb_match_loss = architecture_config["emb_match_loss_weight"] * tf.nn.l2_loss(
                     guess_embedding - cached_embedding)
                 return combined_embedding, emb_match_loss
-
-            self.lookup_cached_emb = _get_persistent_embeddings(
-                self.task_index_ph)
 
             (self.base_combined_emb,
              self.base_emb_match_loss) = _get_combined_embedding_and_match_loss(
                 self.base_guess_emb, self.task_index_ph,
-                config["combined_emb_guess_weight"])
+                architecture_config["combined_emb_guess_weight"])
 
         meta_input_embeddings = _get_persistent_embeddings(
             self.meta_input_indices_ph)
@@ -480,16 +485,16 @@ class HoMM_model(object):
                                                 meta_target_embeddings)
 
 
-        if config["persistent_task_reps"]:
+        if architecture_config["persistent_task_reps"]:
             (self.meta_class_combined_emb,
              self.meta_class_emb_match_loss) = _get_combined_embedding_and_match_loss(
                 self.meta_class_guess_emb, self.task_index_ph,
-                config["combined_emb_guess_weight"])
+                architecture_config["combined_emb_guess_weight"])
 
             (self.meta_map_combined_emb,
              self.meta_map_emb_match_loss) = _get_combined_embedding_and_match_loss(
                 self.meta_map_guess_emb, self.task_index_ph,
-                config["combined_emb_guess_weight"])
+                architecture_config["combined_emb_guess_weight"])
         else:
             self.base_combined_emb = self.base_guess_emb
             self.meta_class_combined_emb = self.meta_class_guess_emb
@@ -500,20 +505,20 @@ class HoMM_model(object):
         self.feed_embedding_ph = tf.placeholder(np.float32,
                                                 [1, num_hidden_hyper])
 
-        z_dim = config["z_dim"]
-        num_hidden_hyper = config["H_num_hidden"]
-        num_hidden_F = config["F_num_hidden"]
-        num_task_hidden_layers = config["F_num_hidden_layers"]
+        z_dim = architecture_config["z_dim"]
+        num_hidden_hyper = architecture_config["H_num_hidden"]
+        num_hidden_F = architecture_config["F_num_hidden"]
+        num_task_hidden_layers = architecture_config["F_num_hidden_layers"]
 
-        tw_range = config["task_weight_weight_mult"]/np.sqrt(
-            num_hidden * num_hidden_hyper) # yields a very very roughly O(1) map
+        tw_range = architecture_config["task_weight_weight_mult"]/np.sqrt(
+            num_hidden_F * num_hidden_hyper) # yields a very very roughly O(1) map
         task_weight_gen_init = tf.random_uniform_initializer(-tw_range,
                                                              tw_range)
 
         def _hyper_network(function_embedding, reuse=True):
             with tf.variable_scope('hyper', reuse=reuse):
                 hyper_hidden = function_embedding
-                for _ in range(config["H_num_hidden_layers"]):
+                for _ in range(architecture_config["H_num_hidden_layers"]):
                     hyper_hidden = slim.fully_connected(hyper_hidden, num_hidden_hyper,
                                                         activation_fn=internal_nonlinearity)
 
@@ -553,11 +558,11 @@ class HoMM_model(object):
         self.base_task_params = _hyper_network(self.base_combined_emb,
                                                reuse=False)
 
-        self.meta_map_task_params = _hyper_network(self.guess_meta_t_function_emb)
         self.meta_map_task_params = _hyper_network(self.meta_map_combined_emb)
         self.meta_class_task_params = _hyper_network(self.meta_class_combined_emb)
 
-        self.lang_task_params = _hyper_network(self.language_function_emb)
+        if self.run_config["train_language"]:
+            self.lang_task_params = _hyper_network(self.language_function_emb)
         self.fed_emb_task_params = _hyper_network(self.feed_embedding_ph)
 
         self.cached_emb_task_params = _hyper_network(self.lookup_cached_emb)
@@ -575,15 +580,11 @@ class HoMM_model(object):
             return raw_output
 
         self.base_raw_output = _task_network(self.base_task_params,
-                                             processed_input)
+                                             self.processed_input)
         self.base_output = output_processor(self.base_raw_output)
 
-        self.base_lang_raw_output = _task_network(self.lang_task_params,
-                                                 processed_input)
-        self.base_lang_output = output_processor(self.base_lang_raw_output)
-
         self.base_raw_output_fed_emb = _task_network(self.fed_emb_task_params,
-                                                     processed_input)
+                                                     self.processed_input)
         self.base_output_fed_emb = output_processor(
             self.base_raw_output_fed_emb)
 
@@ -593,16 +594,22 @@ class HoMM_model(object):
 
         self.meta_map_output = _task_network(self.meta_map_task_params,
                                              meta_input_embeddings) 
-        self.meta_map_lang_output = _task_network(self.lang_task_params,
-                                                  meta_input_embeddings) 
 
         self.base_cached_emb_raw_output = _task_network(
-            self.cached_emb_task_params, processed_input)
+            self.cached_emb_task_params, self.processed_input)
         self.base_cached_emb_output = output_processor(
             self.base_cached_emb_raw_output)
 
         self.meta_cached_emb_raw_output = _task_network(
             self.cached_emb_task_params, meta_input_embeddings)
+
+        if self.run_config["train_language"]:
+            self.base_lang_raw_output = _task_network(self.lang_task_params,
+                                                     processed_input)
+            self.base_lang_output = output_processor(self.base_lang_raw_output)
+
+            self.meta_map_lang_output = _task_network(self.lang_task_params,
+                                                      meta_input_embeddings) 
 
         ## Losses 
 
@@ -613,8 +620,6 @@ class HoMM_model(object):
 
         self.total_base_loss = base_loss(self.base_output, self.base_target_ph) 
 
-        self.total_base_lang_loss = base_loss(self.base_lang_output,
-                                              self.base_target_ph) 
 
         self.total_base_fed_emb_loss = base_loss(self.base_output_fed_emb,
                                                  self.base_target_ph) 
@@ -635,23 +640,32 @@ class HoMM_model(object):
         self.total_meta_map_cached_emb_loss = meta_loss(
             self.meta_map_output, meta_target_embeddings) 
 
-        if persistent_task_reps: # Add the emb_match losses
+        if self.architecture_config["persistent_task_reps"]: # Add the emb_match losses
             self.total_base_loss += self.base_emb_match_loss
             self.total_meta_class_loss += self.meta_class_emb_match_loss
             self.total_meta_map_loss += self.meta_map_emb_match_loss
 
-        if config["optimizer"] == "Adam":
+        if self.run_config["train_language"]:
+            self.total_base_lang_loss = base_loss(self.base_lang_output,
+                                                  self.base_target_ph) 
+
+            self.total_meta_map_lang_loss = meta_loss(self.meta_map_lang_output,
+                                                      meta_target_embeddings) 
+
+        if architecture_config["optimizer"] == "Adam":
             optimizer = tf.train.AdamOptimizer(self.lr_ph)
-        elif config["optimizer"] == "RMSProp":
+        elif architecture_config["optimizer"] == "RMSProp":
             optimizer = tf.train.RMSPropOptimizer(self.lr_ph)
         else:
-            raise ValueError("Unknown optimizer: %s" % config["optimizer"])
+            raise ValueError("Unknown optimizer: %s" % architecture_config["optimizer"])
 
         self.base_train = optimizer.minimize(self.total_base_loss)
-        self.base_lang_train = optimizer.minimize(self.total_base_lang_loss)
         self.meta_class_train = optimizer.minimize(self.total_meta_class_loss)
         self.meta_map_train = optimizer.minimize(self.total_meta_map_loss)
 
+        if self.run_config["train_language"]:
+            self.base_lang_train = optimizer.minimize(self.total_base_lang_loss)
+            self.meta_map_lang_train = optimizer.minimize(self.total_meta_map_lang_loss)
 
     def _sess_and_init(self):
         # Saver
@@ -662,7 +676,7 @@ class HoMM_model(object):
         sess_config.gpu_options.allow_growth = True
         self.sess = tf.Session(config=sess_config)
         self.sess.run(tf.global_variables_initializer())
-        self.fill_buffers(num_data_points=self.run_config["memory_buffer_size"])
+        self.fill_buffers(num_data_points=self.architecture_config["memory_buffer_size"])
 
         self.refresh_meta_datasets()
        
@@ -673,9 +687,9 @@ class HoMM_model(object):
 
     def get_new_memory_buffer(self):
         """Can be overriden by child"""
-        return memory_buffer(self.run_config["memory_buffer_size"],
-                             self.run_config["input_shape"][0],
-                             self.run_config["output_shape"][0])
+        return memory_buffer(self.architecture_config["memory_buffer_size"],
+                             self.architecture_config["input_shape"][0],
+                             self.architecture_config["output_shape"][0])
 
     def base_task_lookup(self, task):
         if isinstance(task, str):
@@ -694,13 +708,13 @@ class HoMM_model(object):
 
     def meta_task_lookup(self, task):
         if task not in self.task_indices:
-            self.meta_datasets[task_name] = {} 
+            self.meta_datasets[task] = {} 
             self.task_indices[task] = self.num_tasks
             self.num_tasks += 1
 
-        return (task_name,
-                self.meta_datasets[task_name],
-                self.task_indices[task_name])
+        return (task,
+                self.meta_datasets[task],
+                self.task_indices[task])
 
     def fill_buffers(self, num_data_points=1, include_new=False):
         """Add new "experiences" to memory buffers."""
