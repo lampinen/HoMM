@@ -1,11 +1,14 @@
 from itertools import permutations
 from copy import deepcopy
 
-import ..HoMM 
-from ..configs.default_run_config import default_run_config
+import numpy as np
+import tensorflow as tf
+
+from HoMM import HoMM_model
+from HoMM.configs import default_run_config
 import polynomials
 
-run_config = default_run_config
+run_config = default_run_config.default_run_config
 run_config.update({
     "output_dir": "polynomials_results/",
     
@@ -25,17 +28,17 @@ run_config.update({
     "new_meta_mappings": ["add_%f" % 2., "add_%f" % -2., "mult_%f" % 2., "mult_%f" % -2.],
 })
 
-class poly_HoMM_model(HoMM.HoMM_model):
+class poly_HoMM_model(HoMM_model.HoMM_model):
     def __init__(self, run_config=None):
         super(poly_HoMM_model, self).__init__(run_config=run_config)
 
     def _pre_build_calls(self):
         # set up the base tasks
-        poly_fam = polynomials.polynomial_family(config["num_variables"], config["max_degree"])
+        poly_fam = polynomials.polynomial_family(self.run_config["num_variables"], self.run_config["max_degree"])
         self.run_config["variables"] = poly_fam.variables
 
-        self.base_train = [poly_fam.sample_polynomial(coefficient_sd=config["poly_coeff_sd"]) for _ in range(self.run_config["num_base_train_tasks"])]
-        self.base_eval = [poly_fam.sample_polynomial(coefficient_sd=config["poly_coeff_sd"]) for _ in range(self.run_config["num_base_eval_tasks"])]
+        self.base_train = [poly_fam.sample_polynomial(coefficient_sd=self.run_config["poly_coeff_sd"]) for _ in range(self.run_config["num_base_train_tasks"])]
+        self.base_eval = [poly_fam.sample_polynomial(coefficient_sd=self.run_config["poly_coeff_sd"]) for _ in range(self.run_config["num_base_eval_tasks"])]
 
         # set up the meta tasks
 
@@ -68,13 +71,13 @@ class poly_HoMM_model(HoMM.HoMM_model):
             meta_map_eval=self.run_config["meta_map_eval"]) 
 
         # add the base tasks implied by the mappings
-        self.run_config["base_train"] += implied_tasks_train
-        self.run_config["base_eval"] += implied_tasks_eval
+        self.base_train += implied_tasks_train
+        self.base_eval += implied_tasks_eval
 
 
     def fill_buffers(self, num_data_points=1, include_new=False):
         """Add new "experiences" to memory buffers."""
-        this_tasks = 
+        this_tasks = self.base_train + self.base_eval 
         for t in this_tasks:
             buff = self.memory_buffers[polynomials.stringify_polynomial(t)]
             x_data = np.zeros([num_data_points, self.config["num_input"]])

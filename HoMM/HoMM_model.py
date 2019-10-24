@@ -7,14 +7,11 @@ from copy import deepcopy
 import numpy as np
 import tensorflow as tf
 import tensorflow.contrib.slim as slim
-import os
-import re
 import warnings
 
-from configs.default_architecture_config import default_architecture_config
+from .configs import default_architecture_config
 
 
-### END PARAMATERS (finally) ##################################
 class memory_buffer(object):
     """Essentially a wrapper around numpy arrays that handles inserting and
     removing."""
@@ -67,10 +64,10 @@ def default_target_processor(targets, IO_num_hidden, z_dim, internal_nonlinearit
     target_processor_nontf = random_orthogonal(z_dim)[:, :output_size + 1]
     target_processor = tf.get_variable('target_processor',
                                         shape=[num_hidden_hyper, output_size],
-                                        initializer=tf.constant_initializer(target_processor_nontf[:, :-1))
+                                        initializer=tf.constant_initializer(target_processor_nontf[:, :-1]))
     meta_class_processor = tf.get_variable('meta_class_processor',
                                         shape=[num_hidden_hyper, output_size],
-                                        initializer=tf.constant_initializer(meta_class_processor_nontf[:, -1:))
+                                        initializer=tf.constant_initializer(meta_class_processor_nontf[:, -1:]))
     
     processed_targets = tf.matmul(targets, tf.transpose(target_processor))
     return processed_targets, target_processor, meta_class_processor
@@ -145,8 +142,11 @@ class HoMM_model(object):
 
         # network and init
         self._build_architecture(
-            self, architecture_config=None, input_processor=None
-            output_processor=None, base_loss=None, meta_loss=None)
+            architecture_config=architecture_config, 
+            input_processor=input_processor,
+            output_processor=output_processor,
+            base_loss=base_loss,
+            meta_loss=meta_loss)
         self._post_build_calls()
         self._sess_and_init()
 
@@ -237,10 +237,10 @@ class HoMM_model(object):
         """Can be overridden to do something after building, before session."""
         pass
 
-    def _build_architecture(self, architecture_config=None, input_processor=None
-                            output_processor=None, base_loss=None, meta_loss=None):
+    def _build_architecture(self, architecture_config, input_processor,
+                            output_processor, base_loss, meta_loss):
         if architecture_config is None:
-            config = default_architecture_config 
+            config = default_architecture_config.default_architecture_config 
         else:
             config = architecture_config
         self.config = config
@@ -722,8 +722,8 @@ class HoMM_model(object):
         The results are expected to be a set of inputs and targets, so this
         will likely need to be overridden for other settings such as RL. 
         """
-    input_buff, output_buff = memory_buffer.get_memories()
-    return input_buff, output_buff
+        input_buff, output_buff = memory_buffer.get_memories()
+        return input_buff, output_buff
 
 
     def intify_task(self, task): 
@@ -753,7 +753,7 @@ class HoMM_model(object):
 
         if base_or_meta == "base":
             task_name, memory_buffer, task_index = self.base_task_lookup(task)
-            inputs, outputs = self.sample_from_memory_buffer(memory_buffer0
+            inputs, outputs = self.sample_from_memory_buffer(memory_buffer)
             feed_dict[self.base_input_ph] = inputs
             feed_dict[self.base_target_ph] = outputs
             feed_dict[self.guess_input_mask_ph] = self._random_guess_mask(
@@ -873,7 +873,7 @@ class HoMM_model(object):
         losses = []
         for meta_task, meta_class in zip([self.meta_class_train + self.meta_class_eval,
                                           self.meta_map_train + self.meta_map_eval],
-                                         [True, False]:
+                                         [True, False]):
             if meta_class:
                 loss = self.meta_class_loss_eval(meta_task)
             else:
@@ -1033,7 +1033,7 @@ class HoMM_model(object):
                 fout.write(formatted_losses)
 
     def run_training(self):
-       """Train model."""
+        """Train model."""
         train_language = self.run_config["train_language"]
         eval_every = self.run_config["eval_every"]
         

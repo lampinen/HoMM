@@ -1,11 +1,14 @@
 import numpy as np
+import re
 from itertools import combinations_with_replacement, chain
+
 
 def weird_powerset(iterable, max_size=None):
     s = list(iterable)
     if max_size is None:
         max_size = len(s)
     return chain.from_iterable(combinations_with_replacement(s, r) for r in range(max_size+1))
+
 
 class polynomial_family(object):
     def __init__(self, num_variables, max_degree=2):
