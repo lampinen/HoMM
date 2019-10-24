@@ -7,7 +7,7 @@ import polynomials
 
 run_config = default_run_config
 run_config.update({
-    "output_dir": "results/",
+    "output_dir": "polynomials_results/",
     
     "memory_buffer_size": 1024, # How many points for each polynomial are stored
     "meta_batch_size": 50, # how many meta-learner sees

@@ -9,6 +9,7 @@ import tensorflow as tf
 import tensorflow.contrib.slim as slim
 import os
 import re
+import warnings
 
 from configs.default_architecture_config import default_architecture_config
 
@@ -939,6 +940,47 @@ class HoMM_model(object):
     def meta_map_train_step(self, meta_task, meta_lr):
         feed_dict = self.build_feed_dict(meta_task, lr=meta_lr, call_type="meta_map_train")
         self.sess.run(self.meta_map_train, feed_dict=feed_dict)
+
+    def update_base_task_embeddings(self):
+        """Updates cached embeddings (for use if embeddings are not persistent)"""
+        if self.architecture_config["persistent_task_embeddings"]:
+            warnings.warn("Overwriting persistent embeddings... Is this "
+                          "intentional?")
+
+        update_inds = []
+        update_values = []
+        for task in self.base_train + self.base_eval:
+            task_emb = self.get_base_embeddings()
+            _, _, task_index = self.base_task_lookup(task)
+            update_inds.append(task_index)
+            update_values.append(task_emb[0])
+
+        self.sess.run(
+            self.update_embeddings,
+            feed_dict={
+                self.task_index_ph: np.array(update_inds, dtype=np.int32),
+                self.update_persistent_embeddings_ph: update_values
+            })
+
+    def update_meta_task_embeddings(self):
+        if self.architecture_config["persistent_task_embeddings"]:
+            warnings.warn("Overwriting persistent embeddings... Is this "
+                          "intentional?")
+
+        update_inds = []
+        update_values = []
+        for task in self.meta_class_train + self.meta_class_eval + self.meta_map_train + self.meta_map_eval:
+            task_emb = self.get_base_embeddings()
+            _, _, task_index = self.meta_task_lookup(task)
+            update_inds.append(task_index)
+            update_values.append(task_emb[0])
+
+        self.sess.run(
+            self.update_embeddings,
+            feed_dict={
+                self.task_index_ph: np.array(update_inds, dtype=np.int32),
+                self.update_persistent_embeddings_ph: update_values
+            })
 
     def save_parameters(self, filename):
         self.saver.save(self.sess, filename)
