@@ -79,7 +79,7 @@ class poly_HoMM_model(HoMM_model.HoMM_model):
         for t in this_tasks:
             buff = self.memory_buffers[polynomials.stringify_polynomial(t)]
             x_data = np.zeros([num_data_points] + self.architecture_config["input_shape"])
-            y_data = np.zeros([num_data_points] + self.architecture_config["input_shape"])
+            y_data = np.zeros([num_data_points] + self.architecture_config["output_shape"])
             for point_i in range(num_data_points):
                 point = t.family.sample_point(val_range=self.run_config["point_val_range"])
                 x_data[point_i, :] = point

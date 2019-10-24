@@ -5,6 +5,7 @@ from __future__ import division
 from copy import deepcopy
 
 import numpy as np
+import os
 import tensorflow as tf
 import tensorflow.contrib.slim as slim
 import warnings
@@ -122,14 +123,18 @@ class HoMM_model(object):
             architecture_config = architecture_config
         self.run_config = deepcopy(run_config)
         self.architecture_config = deepcopy(architecture_config)
-        self.filename_prefix = "run%i_" % self.run_config["this_run"]
+        self.filename_prefix = "%srun%i_" %(self.run_config["output_dir"],
+                                            self.run_config["this_run"])
+
 
         # set up filenames
-        self.run_config["run_config_filename"] = self.filename_prefix + "_run_config.csv"
-        self.run_config["architecture_config_filename"] = self.filename_prefix + "_architecture_config.csv"
-        self.run_config["loss_filename"] = self.filename_prefix + "_losses.csv"
-        self.run_config["meta_filename"] = self.filename_prefix + "_meta_true_losses.csv"
-        self.run_config["lang_filename"] = self.filename_prefix + "_language_losses.csv"
+        self.run_config["run_config_filename"] = self.filename_prefix + "run_config.csv"
+        self.run_config["architecture_config_filename"] = self.filename_prefix + "architecture_config.csv"
+        self.run_config["loss_filename"] = self.filename_prefix + "losses.csv"
+        self.run_config["meta_filename"] = self.filename_prefix + "meta_true_losses.csv"
+        self.run_config["lang_filename"] = self.filename_prefix + "language_losses.csv"
+        if not os.path.exists(self.run_config["output_dir"]):
+            os.makedirs(self.run_config["output_dir"])
 
         # data structures to be
         self.num_tasks = 0
@@ -677,8 +682,6 @@ class HoMM_model(object):
         self.sess = tf.Session(config=sess_config)
         self.sess.run(tf.global_variables_initializer())
         self.fill_buffers(num_data_points=self.architecture_config["memory_buffer_size"])
-
-        self.refresh_meta_datasets()
        
         save_config(self.run_config["run_config_filename"], self.run_config) 
         save_config(self.run_config["architecture_config_filename"],
@@ -687,9 +690,9 @@ class HoMM_model(object):
 
     def get_new_memory_buffer(self):
         """Can be overriden by child"""
-        return memory_buffer(self.architecture_config["memory_buffer_size"],
-                             self.architecture_config["input_shape"][0],
-                             self.architecture_config["output_shape"][0])
+        return memory_buffer(length=self.architecture_config["memory_buffer_size"],
+                             input_width=self.architecture_config["input_shape"][0],
+                             outcome_width=self.architecture_config["output_shape"][0])
 
     def base_task_lookup(self, task):
         if isinstance(task, str):
@@ -957,14 +960,14 @@ class HoMM_model(object):
 
     def update_base_task_embeddings(self):
         """Updates cached embeddings (for use if embeddings are not persistent)"""
-        if self.architecture_config["persistent_task_embeddings"]:
+        if self.architecture_config["persistent_task_reps"]:
             warnings.warn("Overwriting persistent embeddings... Is this "
                           "intentional?")
 
         update_inds = []
         update_values = []
         for task in self.base_train_tasks + self.base_eval_tasks:
-            task_emb = self.get_base_embeddings()
+            task_emb = self.get_base_embedding(task)
             _, _, task_index = self.base_task_lookup(task)
             update_inds.append(task_index)
             update_values.append(task_emb[0])
@@ -977,17 +980,20 @@ class HoMM_model(object):
             })
 
     def update_meta_task_embeddings(self):
-        if self.architecture_config["persistent_task_embeddings"]:
+        if self.architecture_config["persistent_task_reps"]:
             warnings.warn("Overwriting persistent embeddings... Is this "
                           "intentional?")
 
         update_inds = []
         update_values = []
-        for task in self.meta_class_train_tasks + self.meta_class_eval_tasks + self.meta_map_train_tasks + self.meta_map_eval_tasks:
-            task_emb = self.get_base_embeddings()
-            _, _, task_index = self.meta_task_lookup(task)
-            update_inds.append(task_index)
-            update_values.append(task_emb[0])
+        for these_tasks, meta_class in zip([self.meta_class_train_tasks + self.meta_class_eval_tasks,
+                                            self.meta_map_train_tasks + self.meta_map_eval_tasks],
+                                           [True, False]):
+            for task in these_tasks:
+                task_emb = self.get_meta_embedding(task, meta_class)
+                _, _, task_index = self.meta_task_lookup(task)
+                update_inds.append(task_index)
+                update_values.append(task_emb[0])
 
         self.sess.run(
             self.update_embeddings,
@@ -1003,7 +1009,7 @@ class HoMM_model(object):
         self.saver.restore(self.sess, filename)
 
     def run_eval(self, epoch, print_losses=True):
-        if not(self.architecture_config["persistent_task_embeddings"]):
+        if not(self.architecture_config["persistent_task_reps"]):
             self.update_base_task_embeddings()  # make sure we're up to date
             self.update_meta_task_embeddings()
 
@@ -1055,8 +1061,7 @@ class HoMM_model(object):
         language_learning_rate = self.run_config["init_language_learning_rate"]
         meta_learning_rate = self.run_config["init_meta_learning_rate"]
 
-        save_every = self.run_config["save_every"]
-        early_stopping_thresh = self.run_config["early_stopping_thresh"]
+        eval_every = self.run_config["eval_every"]
         lr_decays_every = self.run_config["lr_decays_every"]
         lr_decay = self.run_config["lr_decay"]
         meta_lr_decay = self.run_config["meta_lr_decay"]
@@ -1067,7 +1072,7 @@ class HoMM_model(object):
             language_lr_decay = self.run_config["language_lr_decay"]
             min_language_learning_rate = self.run_config["min_language_learning_rate"]
 
-        self.fill_memory_buffers()
+        self.fill_buffers()
 
         self.run_eval(epoch=0)
 
