@@ -133,12 +133,12 @@ class HoMM_model(object):
 
         # data structures to be
         self.num_tasks = 0
-        self.base_train = [] 
-        self.base_eval = [] 
-        self.meta_class_train = []
-        self.meta_class_eval = []
-        self.meta_map_train = []
-        self.meta_map_eval = []
+        self.base_train_tasks = [] 
+        self.base_eval_tasks = [] 
+        self.meta_class_train_tasks = []
+        self.meta_class_eval_tasks = []
+        self.meta_map_train_tasks = []
+        self.meta_map_eval_tasks = []
 
         self.meta_pairings = {}
 
@@ -169,29 +169,29 @@ class HoMM_model(object):
         """Create the memory buffers, etc. for the tasks."""
         
         # update config
-        self.run_config["base_train"] = self.base_train
-        self.run_config["base_eval"] = self.base_eval
-        self.run_config["meta_class_train"] = self.meta_class_train
-        self.run_config["meta_class_eval"] = self.meta_class_eval
-        self.run_config["meta_map_train"] = self.meta_map_train
-        self.run_config["meta_map_eval"] = self.meta_map_eval
+        self.run_config["base_train_tasks"] = self.base_train_tasks
+        self.run_config["base_eval_tasks"] = self.base_eval_tasks
+        self.run_config["meta_class_train_tasks"] = self.meta_class_train_tasks
+        self.run_config["meta_class_eval_tasks"] = self.meta_class_eval_tasks
+        self.run_config["meta_map_train_tasks"] = self.meta_map_train_tasks
+        self.run_config["meta_map_eval_tasks"] = self.meta_map_eval_tasks
 
         self.task_indices = {}
         # create buffers for base tasks
         self.memory_buffers = {}
-        for task in self.base_train + self.base_eval:
+        for task in self.base_train_tasks + self.base_eval_tasks:
             self.base_task_lookup(task)
 
         # create structures for meta tasks
         self.meta_datasets = {}
-        all_meta_tasks = self.meta_class_train + self.meta_class_eval + self.meta_map_train + self.meta_map_eval
+        all_meta_tasks = self.meta_class_train_tasks + self.meta_class_eval_tasks + self.meta_map_train_tasks + self.meta_map_eval_tasks
         for mt in all_meta_tasks:
             self.meta_task_lookup(mt)
 
         # populate meta-task structures
-        for mts, meta_class in zip([self.meta_class_train + self.meta_class_eval,
-                                      self.meta_map_train + self.meta_map_eval],
-                                     [True, False]):
+        for mts, meta_class in zip([self.meta_class_train_tasks + self.meta_class_eval_tasks,
+                                    self.meta_map_train_tasks + self.meta_map_eval_tasks],
+                                   [True, False]):
             out_dtype = np.float32 if meta_class else np.int32
             for mt in mts:
                 self.meta_datasets[mt] = {} 
@@ -659,13 +659,13 @@ class HoMM_model(object):
         else:
             raise ValueError("Unknown optimizer: %s" % architecture_config["optimizer"])
 
-        self.base_train = optimizer.minimize(self.total_base_loss)
-        self.meta_class_train = optimizer.minimize(self.total_meta_class_loss)
-        self.meta_map_train = optimizer.minimize(self.total_meta_map_loss)
+        self.base_train_op = optimizer.minimize(self.total_base_loss)
+        self.meta_class_train_op = optimizer.minimize(self.total_meta_class_loss)
+        self.meta_map_train_op = optimizer.minimize(self.total_meta_map_loss)
 
         if self.run_config["train_language"]:
-            self.base_lang_train = optimizer.minimize(self.total_base_lang_loss)
-            self.meta_map_lang_train = optimizer.minimize(self.total_meta_map_lang_loss)
+            self.base_lang_train_op = optimizer.minimize(self.total_base_lang_loss)
+            self.meta_map_lang_train_op = optimizer.minimize(self.total_meta_map_lang_loss)
 
     def _sess_and_init(self):
         # Saver
@@ -808,12 +808,12 @@ class HoMM_model(object):
 
     def base_train_step(self, task, lr):
         feed_dict = self.build_feed_dict(task, lr=lr, call_type="base_standard_train")
-        self.sess.run(self.base_train, feed_dict=feed_dict)
+        self.sess.run(self.base_train_op, feed_dict=feed_dict)
 
 
     def base_language_train_step(self, task, lr):
         feed_dict = self.build_feed_dict(task, lr=lr, call_type="base_lang_train")
-        self.sess.run(self.base_lang_train, feed_dict=feed_dict)
+        self.sess.run(self.base_lang_train_op, feed_dict=feed_dict)
 
 
     def base_eval(self, task):
@@ -828,7 +828,7 @@ class HoMM_model(object):
         if not self.run_config["persistent_task_reps"]:
             self.refresh_base_embeddings() # make sure we're up to date
 
-        base_tasks = self.base_train + self.base_eval 
+        base_tasks = self.base_train_tasks + self.base_eval_tasks 
 
         losses = [] 
         for task in base_tasks:
@@ -846,7 +846,7 @@ class HoMM_model(object):
         return res
 
     def run_base_language_eval(self):
-        base_tasks = self.base_train + self.base_eval 
+        base_tasks = self.base_train_tasks + self.base_eval_tasks 
 
         losses = [] 
         names = []
@@ -885,8 +885,8 @@ class HoMM_model(object):
     def run_meta_loss_eval(self):
         names = []
         losses = []
-        for meta_task, meta_class in zip([self.meta_class_train + self.meta_class_eval,
-                                          self.meta_map_train + self.meta_map_eval],
+        for meta_task, meta_class in zip([self.meta_class_train_tasks + self.meta_class_eval_tasks,
+                                          self.meta_map_train_tasks + self.meta_map_eval_tasks],
                                          [True, False]):
             if meta_class:
                 loss = self.meta_class_loss_eval(meta_task)
@@ -936,8 +936,8 @@ class HoMM_model(object):
            by the embedding output by the meta task"""
         names = []
         losses = []
-        for these_meta_mappings, train_or_eval in zip([self.meta_map_train,
-                                                       self.meta_map_eval],
+        for these_meta_mappings, train_or_eval in zip([self.meta_map_train_tasks,
+                                                       self.meta_map_eval_tasks],
                                                       ["train", "eval"]):
             for meta_mapping in these_meta_mappings:
                 these_names, these_losses = self.meta_true_eval_step(
@@ -949,11 +949,11 @@ class HoMM_model(object):
 
     def meta_class_train_step(self, meta_task, meta_lr):
         feed_dict = self.build_feed_dict(meta_task, lr=meta_lr, call_type="meta_class_train")
-        self.sess.run(self.meta_class_train, feed_dict=feed_dict)
+        self.sess.run(self.meta_class_train_op, feed_dict=feed_dict)
 
     def meta_map_train_step(self, meta_task, meta_lr):
         feed_dict = self.build_feed_dict(meta_task, lr=meta_lr, call_type="meta_map_train")
-        self.sess.run(self.meta_map_train, feed_dict=feed_dict)
+        self.sess.run(self.meta_map_train_op, feed_dict=feed_dict)
 
     def update_base_task_embeddings(self):
         """Updates cached embeddings (for use if embeddings are not persistent)"""
@@ -963,7 +963,7 @@ class HoMM_model(object):
 
         update_inds = []
         update_values = []
-        for task in self.base_train + self.base_eval:
+        for task in self.base_train_tasks + self.base_eval_tasks:
             task_emb = self.get_base_embeddings()
             _, _, task_index = self.base_task_lookup(task)
             update_inds.append(task_index)
@@ -983,7 +983,7 @@ class HoMM_model(object):
 
         update_inds = []
         update_values = []
-        for task in self.meta_class_train + self.meta_class_eval + self.meta_map_train + self.meta_map_eval:
+        for task in self.meta_class_train_tasks + self.meta_class_eval_tasks + self.meta_map_train_tasks + self.meta_map_eval_tasks:
             task_emb = self.get_base_embeddings()
             _, _, task_index = self.meta_task_lookup(task)
             update_inds.append(task_index)
@@ -1071,8 +1071,8 @@ class HoMM_model(object):
 
         self.run_eval(epoch=0)
 
-        tasks = self.base_train + self.meta_class_train + self.meta_map_train
-        task_types = ["base"] * len(self.base_train) + ["meta_class"] * len(self.meta_class_train) + ["meta_map"] * len(self.meta_map_train)
+        tasks = self.base_train_tasks + self.meta_class_train_tasks + self.meta_map_train_tasks
+        task_types = ["base"] * len(self.base_train_tasks) + ["meta_class"] * len(self.meta_class_train_tasks) + ["meta_map"] * len(self.meta_map_train_tasks)
 
         for epoch in range(1, num_epochs+1):
             if epoch % config["refresh_mem_buffs_every"] == 0:

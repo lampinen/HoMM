@@ -297,14 +297,16 @@ def get_distinct_random_choices(values, num_choices_per, num_sets,
     return [np.random.permutation(list(s)) for s in sets]
 
 
-def get_meta_pairings(base_train, base_eval, meta_class_train, meta_class_eval,
-                      meta_map_train, meta_map_eval):
+def get_meta_pairings(base_train_tasks, base_eval_tasks, meta_class_train_tasks, meta_class_eval_tasks,
+                      meta_map_train_tasks, meta_map_eval_tasks):
     """Gets which tasks map to which other tasks under the meta mappings."""
-    all_meta_tasks = meta_class_train + meta_class_eval + meta_map_train + meta_map_eval 
+    all_meta_tasks = meta_class_train_tasks + meta_class_eval_tasks + meta_map_train_tasks + meta_map_eval_tasks 
     meta_pairings = {mt: {"train": [], "eval": []} for mt in all_meta_tasks}
     implied_tasks = {"train": [], "eval": []} 
     for mt in all_meta_tasks:
-        for curr_base_tasks, train_or_eval in zip([base_train, base_eval], ["train", "eval"]):
+        for curr_base_tasks, train_or_eval in zip([base_train_tasks,
+                                                   base_eval_tasks],
+                                                  ["train", "eval"]):
             if mt == "square":
                 for poly in curr_base_tasks:
                     if poly.my_max_degree**2 > poly.family.max_degree:
