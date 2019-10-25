@@ -1,6 +1,7 @@
 default_run_config = {
     "train_language": False,
     
+    "num_epochs": 10000,  # number of training epochs
     "refresh_mem_buffs_every": 50, # how many epochs between updates to buffers
     "eval_every": 20,  # how many epochs between evals
 

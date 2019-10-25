@@ -800,6 +800,8 @@ class HoMM_model(object):
                 feed_dict[self.meta_class_ph] = meta_targets
 
         if call_type == "fed":
+            if len(fed_embedding.shape) == 1:
+                fed_embedding = np.expand_dims(fed_embedding, axis=0)
             feed_dict[self.feed_embedding_ph] = fed_embedding
         elif call_type == "lang":
             feed_dict[self.language_input_ph] = self.intify_task(task_name)
@@ -868,7 +870,7 @@ class HoMM_model(object):
         return names, losses
 
     def base_embedding_eval(self, embedding, task):
-        feed_dict = self.build_feed_dict(task, feed_embedding=embedding, call_type="base_fed_eval")
+        feed_dict = self.build_feed_dict(task, fed_embedding=embedding, call_type="base_fed_eval")
         fetches = [self.total_base_fed_emb_loss]
         res = self.sess.run(fetches, feed_dict=feed_dict)
         return res
@@ -928,6 +930,7 @@ class HoMM_model(object):
                                           feed_dict=feed_dict) 
 
         names = []
+        losses = []
         i = 0
         for train_or_eval in ["train", "eval"]:
             for (task, other) in self.meta_pairings[meta_mapping][train_or_eval]:
