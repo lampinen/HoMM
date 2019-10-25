@@ -845,7 +845,7 @@ class HoMM_model(object):
             res = self.base_eval(task)
             losses.append(res[0])
 
-        names = [_stringify_polynomial(t) for t in base_tasks]
+        names = [str(t) for t in base_tasks]
         return names, losses
         
 
@@ -873,7 +873,7 @@ class HoMM_model(object):
         res = self.sess.run(fetches, feed_dict=feed_dict)
         return res
 
-    def get_base_embedding(self, task):
+    def get_base_guess_embedding(self, task):
         feed_dict = self.build_feed_dict(task, call_type="base_standard_eval")
         feed_dict[self.guess_input_mask_ph][:] = 1
         res = self.sess.run(self.base_guess_emb, feed_dict=feed_dict)
@@ -885,29 +885,30 @@ class HoMM_model(object):
         return res
 
     def meta_class_loss_eval(self, meta_task):
-        feed_dict = self.build_feed_dict(meta_task, call_type="metaclass_standard_eval")
+        feed_dict = self.build_feed_dict(meta_task, call_type="metaclass_cached_eval")
         return self.sess.run(self.total_meta_class_cached_emb_loss, feed_dict=feed_dict)
         
     def meta_map_loss_eval(self, meta_task):
-        feed_dict = self.build_feed_dict(meta_task, call_type="metamap_standard_eval")
+        feed_dict = self.build_feed_dict(meta_task, call_type="metamap_cached_eval")
         return self.sess.run(self.total_meta_map_cached_emb_loss, feed_dict=feed_dict)
 
     def run_meta_loss_eval(self):
         names = []
         losses = []
-        for meta_task, meta_class in zip([self.meta_class_train_tasks + self.meta_class_eval_tasks,
+        for meta_tasks, meta_class in zip([self.meta_class_train_tasks + self.meta_class_eval_tasks,
                                           self.meta_map_train_tasks + self.meta_map_eval_tasks],
                                          [True, False]):
-            if meta_class:
-                loss = self.meta_class_loss_eval(meta_task)
-            else:
-                loss = self.meta_map_loss_eval(meta_task)
-            names.append(meta_task)
-            losses.append(loss)
+            for meta_task in meta_tasks:
+                if meta_class:
+                    loss = self.meta_class_loss_eval(meta_task)
+                else:
+                    loss = self.meta_map_loss_eval(meta_task)
+                names.append(meta_task)
+                losses.append(loss)
 
         return names, losses
 
-    def get_meta_embedding(self, meta_task, meta_class):
+    def get_meta_guess_embedding(self, meta_task, meta_class):
         """Note: cached base embeddings must be up to date!"""
         call_type = "metaclass_standard_eval" if meta_class else "metamap_standard_eval"
         feed_dict = self.build_feed_dict(meta_task, call_type=call_type)
@@ -923,9 +924,9 @@ class HoMM_model(object):
 
         feed_dict = self.build_feed_dict(meta_mapping,
                                          call_type="metamap_cached_eval")
-        result_embeddings = self.sess.run(self.meta_m_output,
+        result_embeddings = self.sess.run(self.meta_map_output,
                                           feed_dict=feed_dict) 
-    
+
         names = []
         i = 0
         for train_or_eval in ["train", "eval"]:
@@ -950,7 +951,7 @@ class HoMM_model(object):
                                                       ["train", "eval"]):
             for meta_mapping in these_meta_mappings:
                 these_names, these_losses = self.meta_true_eval_step(
-                    meta_mapping, meta_mapping_train_or_eval) 
+                    meta_mapping, train_or_eval) 
                 names += these_names
                 losses += these_losses
 
@@ -973,7 +974,7 @@ class HoMM_model(object):
         update_inds = []
         update_values = []
         for task in self.base_train_tasks + self.base_eval_tasks:
-            task_emb = self.get_base_embedding(task)
+            task_emb = self.get_base_guess_embedding(task)
             _, _, task_index = self.base_task_lookup(task)
             update_inds.append(task_index)
             update_values.append(task_emb[0])
@@ -996,7 +997,7 @@ class HoMM_model(object):
                                             self.meta_map_train_tasks + self.meta_map_eval_tasks],
                                            [True, False]):
             for task in these_tasks:
-                task_emb = self.get_meta_embedding(task, meta_class)
+                task_emb = self.get_meta_guess_embedding(task, meta_class)
                 _, _, task_index = self.meta_task_lookup(task)
                 update_inds.append(task_index)
                 update_values.append(task_emb[0])
