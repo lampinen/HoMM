@@ -210,25 +210,32 @@ class HoMM_model(object):
                 self.meta_datasets[mt]["eval"] = {}
                 self.meta_datasets[mt]["train"]["in"] = np.zeros(
                     [num_train, ], dtype=np.int32)
-                self.meta_datasets[mt]["train"]["out"] = np.zeros(
-                    [num_train, ], dtype=out_dtype)
 
                 self.meta_datasets[mt]["eval"]["in"] = np.zeros(
                     [num_train + num_eval], dtype=np.int32)
-                self.meta_datasets[mt]["eval"]["out"] = np.zeros(
-                    [num_train + num_eval], dtype=out_dtype)
                 eval_guess_mask = np.concatenate([np.ones([num_train],
                                                           dtype=np.bool),
                                                   np.zeros([num_eval],
                                                            dtype=np.bool)])
-
                 self.meta_datasets[mt]["eval"]["gm"] = eval_guess_mask
+
+                if meta_class:
+                    self.meta_datasets[mt]["train"]["out"] = np.zeros(
+                        [num_train, 1], dtype=out_dtype)
+                    self.meta_datasets[mt]["eval"]["out"] = np.zeros(
+                        [num_train + num_eval, 1], dtype=out_dtype)
+
+                else:
+                    self.meta_datasets[mt]["train"]["out"] = np.zeros(
+                        [num_train, ], dtype=out_dtype)
+                    self.meta_datasets[mt]["eval"]["out"] = np.zeros(
+                        [num_train + num_eval], dtype=out_dtype)
 
                 for i, (e, res) in enumerate(train_pairings):
                     e_index = self.task_indices[e]
                     self.meta_datasets[mt]["train"]["in"][i] = e_index
                     if meta_class:
-                        self.meta_datasets[mt]["train"]["out"][i] = res
+                        self.meta_datasets[mt]["train"]["out"][i, 0] = res
                     else:
                         res_index = self.task_indices[res]
                         self.meta_datasets[mt]["train"]["out"][i] = res_index
@@ -240,7 +247,7 @@ class HoMM_model(object):
                     e_index = self.task_indices[e]
                     self.meta_datasets[mt]["eval"]["in"][num_train + i] = e_index
                     if meta_class:
-                        self.meta_datasets[mt]["eval"]["out"][num_train + i] = res
+                        self.meta_datasets[mt]["eval"]["out"][num_train + i, 0] = res
                     else:
                         res_index = self.task_indices[res]
                         self.meta_datasets[mt]["eval"]["out"][num_train + i] = res_index
@@ -321,6 +328,7 @@ class HoMM_model(object):
         # function embedding "guessing" network / meta network
         # {(emb_in, emb_out), ...} -> emb
         self.guess_input_mask_ph = tf.placeholder(tf.bool, shape=[None]) # which datapoints get excluded from the guess
+        self.meta_batch_size = architecture_config["meta_batch_size"]  # this is used for generating guess masks
 
         def _meta_network(embedded_inputs, embedded_targets,
                           guess_mask=self.guess_input_mask_ph, reuse=True):
@@ -726,7 +734,7 @@ class HoMM_model(object):
 
     def _random_guess_mask(self, dataset_length, meta_batch_size=None):
         if meta_batch_size is None:
-            meta_batch_size = config["meta_batch_size"]
+            meta_batch_size = self.meta_batch_size
         mask = np.zeros(dataset_length, dtype=np.bool)
         indices = np.random.permutation(dataset_length)[:meta_batch_size]
         mask[indices] = True
@@ -777,7 +785,7 @@ class HoMM_model(object):
                 len(outputs))
         else: # meta call
             task_name, meta_dataset, task_index = self.meta_task_lookup(task)
-            meta_input_indices = meta_dataset[train_or_eval]["in"],
+            meta_input_indices = meta_dataset[train_or_eval]["in"]
             feed_dict[self.meta_input_indices_ph] = meta_input_indices
             if train_or_eval == "train":
                 guess_mask = self._random_guess_mask(
@@ -795,6 +803,8 @@ class HoMM_model(object):
             feed_dict[self.feed_embedding_ph] = fed_embedding
         elif call_type == "lang":
             feed_dict[self.language_input_ph] = self.intify_task(task_name)
+        elif call_type == "cached":
+            feed_dict[self.task_index_ph] = [task_index]
 
         if train_or_eval == "train":
             feed_dict[self.lr_ph] = lr
@@ -828,9 +838,6 @@ class HoMM_model(object):
 
     def run_base_eval(self):
         """Run evaluation on basic tasks."""
-        if not self.run_config["persistent_task_reps"]:
-            self.refresh_base_embeddings() # make sure we're up to date
-
         base_tasks = self.base_train_tasks + self.base_eval_tasks 
 
         losses = [] 
@@ -869,7 +876,7 @@ class HoMM_model(object):
     def get_base_embedding(self, task):
         feed_dict = self.build_feed_dict(task, call_type="base_standard_eval")
         feed_dict[self.guess_input_mask_ph][:] = 1
-        res = self.sess.run(self.guess_base_function_emb, feed_dict=feed_dict)
+        res = self.sess.run(self.base_guess_emb, feed_dict=feed_dict)
         return res
 
     def get_language_embedding(self, intified_task):
@@ -878,11 +885,11 @@ class HoMM_model(object):
         return res
 
     def meta_class_loss_eval(self, meta_task):
-        feed_dict = self.build_feed_dict(meta_task, call_type="meta_class_eval")
+        feed_dict = self.build_feed_dict(meta_task, call_type="metaclass_standard_eval")
         return self.sess.run(self.total_meta_class_cached_emb_loss, feed_dict=feed_dict)
         
     def meta_map_loss_eval(self, meta_task):
-        feed_dict = self.build_feed_dict(meta_task, call_type="meta_map_eval")
+        feed_dict = self.build_feed_dict(meta_task, call_type="metamap_standard_eval")
         return self.sess.run(self.total_meta_map_cached_emb_loss, feed_dict=feed_dict)
 
     def run_meta_loss_eval(self):
@@ -902,9 +909,8 @@ class HoMM_model(object):
 
     def get_meta_embedding(self, meta_task, meta_class):
         """Note: cached base embeddings must be up to date!"""
-        call_type = "meta_class_eval" if meta_class else meta_map_eval
+        call_type = "metaclass_standard_eval" if meta_class else "metamap_standard_eval"
         feed_dict = self.build_feed_dict(meta_task, call_type=call_type)
-        feed_dict[self.guess_input_mask_ph][:] = 1
         if meta_class:
             fetch = self.meta_class_guess_emb 
         else:
@@ -951,11 +957,11 @@ class HoMM_model(object):
         return names, losses 
 
     def meta_class_train_step(self, meta_task, meta_lr):
-        feed_dict = self.build_feed_dict(meta_task, lr=meta_lr, call_type="meta_class_train")
+        feed_dict = self.build_feed_dict(meta_task, lr=meta_lr, call_type="metaclass_standard_train")
         self.sess.run(self.meta_class_train_op, feed_dict=feed_dict)
 
     def meta_map_train_step(self, meta_task, meta_lr):
-        feed_dict = self.build_feed_dict(meta_task, lr=meta_lr, call_type="meta_map_train")
+        feed_dict = self.build_feed_dict(meta_task, lr=meta_lr, call_type="metamap_standard_train")
         self.sess.run(self.meta_map_train_op, feed_dict=feed_dict)
 
     def update_base_task_embeddings(self):
