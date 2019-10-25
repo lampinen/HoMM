@@ -1071,7 +1071,10 @@ class HoMM_model(object):
         language_learning_rate = self.run_config["init_language_learning_rate"]
         meta_learning_rate = self.run_config["init_meta_learning_rate"]
 
+        
+        num_epochs = self.run_config["num_epochs"]
         eval_every = self.run_config["eval_every"]
+        refresh_mem_buffs_every = self.run_config["refresh_mem_buffs_every"]
         lr_decays_every = self.run_config["lr_decays_every"]
         lr_decay = self.run_config["lr_decay"]
         meta_lr_decay = self.run_config["meta_lr_decay"]
@@ -1090,7 +1093,7 @@ class HoMM_model(object):
         task_types = ["base"] * len(self.base_train_tasks) + ["meta_class"] * len(self.meta_class_train_tasks) + ["meta_map"] * len(self.meta_map_train_tasks)
 
         for epoch in range(1, num_epochs+1):
-            if epoch % config["refresh_mem_buffs_every"] == 0:
+            if epoch % refresh_mem_buffs_every == 0:
                 self.fill_buffers()
 
             order = np.random.permutation(len(tasks))
