@@ -1050,8 +1050,6 @@ class HoMM_model(object):
             print(formatted_losses)
 
         with open(self.run_config["meta_filename"], "a") as fout:
-            if epoch == 0:
-
             formatted_losses = epoch_s + (self.meta_true_loss_format % tuple(
                 meta_true_losses))
             fout.write(formatted_losses)
