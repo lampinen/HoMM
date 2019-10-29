@@ -1019,19 +1019,29 @@ class HoMM_model(object):
         self.saver.restore(self.sess, filename)
 
     def run_eval(self, epoch, print_losses=True):
+
         if not(self.architecture_config["persistent_task_reps"]):
             self.update_base_task_embeddings()  # make sure we're up to date
             self.update_meta_task_embeddings()
 
         base_names, base_losses = self.run_base_eval()
         meta_names, meta_losses = self.run_meta_loss_eval()
+        meta_true_names, meta_true_losses = self.run_meta_true_eval()
+
+        if epoch == 0:
+            # set up format strings
+            self.loss_format = ", ".join(["%f" for _ in base_names + meta_names]) + "\n"
+            self.meta_true_loss_format = ", ".join(["%f" for _ in meta_true_names]) + "\n"
+
+            # write headers and overwrite existing files 
+            with open(self.run_config["loss_filename"], "w") as fout:
+                fout.write("epoch, " + ", ".join(base_names + meta_names) + "\n")
+            with open(self.run_config["meta_filename"], "w") as fout:
+                fout.write("epoch, " + ", ".join(meta_true_names) + "\n")
+
 
         epoch_s = "%i, " % epoch
-        with open(self.run_config["loss_filename"], "w") as fout:
-            if epoch == 0:
-                fout.write("epoch, " + ", ".join(base_names + meta_names) + "\n")
-                self.loss_format = ", ".join(["%f" for _ in base_names + meta_names]) + "\n"
-
+        with open(self.run_config["loss_filename"], "a") as fout:
             formatted_losses = epoch_s + (self.loss_format % tuple(
                 base_losses + meta_losses))
             fout.write(formatted_losses)
@@ -1039,12 +1049,8 @@ class HoMM_model(object):
         if print_losses:
             print(formatted_losses)
 
-        meta_true_names, meta_true_losses = self.run_meta_true_eval()
-
-        with open(self.run_config["meta_filename"], "w") as fout:
+        with open(self.run_config["meta_filename"], "a") as fout:
             if epoch == 0:
-                fout.write("epoch, " + ", ".join(meta_true_names) + "\n")
-                self.meta_true_loss_format = ", ".join(["%f" for _ in meta_true_names]) + "\n"
 
             formatted_losses = epoch_s + (self.meta_true_loss_format % tuple(
                 meta_true_losses))
@@ -1052,13 +1058,13 @@ class HoMM_model(object):
 
         if self.run_config["train_language"]:
             lang_names, lang_losses = self.run_lang_eval()
-
-            with open(self.run_config["lang_filename"], "w") as fout:
-                if epoch == 0:
+            if epoch == 0:
+                self.lang_loss_format = ", ".join(["%f" for _ in lang_names]) + "\n"
+                with open(self.run_config["lang_filename"], "w") as fout:
                     fout.write("epoch, " + ", ".join(lang_names) + "\n")
-                    self.loss_format = ", ".join(["%f" for _ in lang_names]) + "\n"
 
-                formatted_losses = epoch_s + (self.loss_format % tuple(
+            with open(self.run_config["lang_filename"], "a") as fout:
+                formatted_losses = epoch_s + (self.lang_loss_format % tuple(
                     lang_losses))
                 fout.write(formatted_losses)
 
