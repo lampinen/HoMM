@@ -86,7 +86,7 @@ def default_output_processor(output_embeddings, target_processor):
 
 
 def default_base_loss(outputs, targets):
-    return tf.nn.l2_loss(outputs - targets)
+    return tf.reduce_mean(tf.square(outputs - targets))
 
 
 def default_meta_loss(outputs, targets):
