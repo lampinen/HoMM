@@ -72,8 +72,7 @@ class poly_HoMM_model(HoMM_model.HoMM_model):
         self.base_train_tasks += implied_tasks_train_tasks
         self.base_eval_tasks += implied_tasks_eval_tasks
 
-
-    def fill_buffers(self, num_data_points=1, include_new=False):
+    def fill_buffers(self, num_data_points=1):
         """Add new "experiences" to memory buffers."""
         this_tasks = self.base_train_tasks + self.base_eval_tasks 
         for t in this_tasks:
