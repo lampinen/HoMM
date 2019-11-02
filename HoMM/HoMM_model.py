@@ -1019,11 +1019,6 @@ class HoMM_model(object):
         self.saver.restore(self.sess, filename)
 
     def run_eval(self, epoch, print_losses=True):
-
-        if not(self.architecture_config["persistent_task_reps"]):
-            self.update_base_task_embeddings()  # make sure we're up to date
-            self.update_meta_task_embeddings()
-
         base_names, base_losses = self.run_base_eval()
         meta_names, meta_losses = self.run_meta_loss_eval()
         meta_true_names, meta_true_losses = self.run_meta_true_eval()
@@ -1116,6 +1111,10 @@ class HoMM_model(object):
                     self.meta_map_train_step(task, meta_learning_rate)
                     if train_language:
                         self.meta_map_lang_train_step(task, meta_learning_rate)
+
+            if not(self.architecture_config["persistent_task_reps"]):
+                self.update_base_task_embeddings()  # make sure we're up to date
+                self.update_meta_task_embeddings()
 
             if epoch % eval_every == 0:
                 self.run_eval(epoch)
