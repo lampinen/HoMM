@@ -182,6 +182,7 @@ class HoMM_model(object):
         self.run_config["meta_map_eval_tasks"] = self.meta_map_eval_tasks
 
         self.task_indices = {}
+
         # create buffers for base tasks
         self.memory_buffers = {}
         for task in self.base_train_tasks + self.base_eval_tasks:
@@ -459,6 +460,10 @@ class HoMM_model(object):
                 self.task_index_ph,
                 self.update_persistent_embeddings_ph)
 
+        # don't update cached embeddings if not persistent -- will be updated manually
+        if not architecture_config["persistent_task_reps"]:
+            self.persistent_embeddings = tf.stop_gradient(self.persistent_embeddings)
+
         def _get_persistent_embeddings(task_indices):
             persistent_embs = self.persistent_embeddings
 
@@ -731,7 +736,6 @@ class HoMM_model(object):
         """Add new "experiences" to memory buffers."""
         raise NotImplementedError("fill_buffers() should be overridden by the child class!")
 
-
     def _random_guess_mask(self, dataset_length, meta_batch_size=None):
         if meta_batch_size is None:
             meta_batch_size = self.meta_batch_size
@@ -739,7 +743,6 @@ class HoMM_model(object):
         indices = np.random.permutation(dataset_length)[:meta_batch_size]
         mask[indices] = True
         return mask
-
 
     def sample_from_memory_buffer(self, memory_buffer):
         """Return experiences from the memory buffer.
@@ -820,23 +823,22 @@ class HoMM_model(object):
 
         return feed_dict
 
-
     def base_train_step(self, task, lr):
         feed_dict = self.build_feed_dict(task, lr=lr, call_type="base_standard_train")
         self.sess.run(self.base_train_op, feed_dict=feed_dict)
-
 
     def base_language_train_step(self, task, lr):
         feed_dict = self.build_feed_dict(task, lr=lr, call_type="base_lang_train")
         self.sess.run(self.base_lang_train_op, feed_dict=feed_dict)
 
-
     def base_eval(self, task):
         feed_dict = self.build_feed_dict(task, call_type="base_cached_eval")
-        fetches = [self.total_base_cached_emb_loss]
+        guess_emb = self.get_base_guess_embedding(task)
+        fetches = [self.total_base_loss, self.lookup_cached_emb]
         res = self.sess.run(fetches, feed_dict=feed_dict)
+#        print(res[1])
+#        print(guess_emb[0])
         return res
-
 
     def run_base_eval(self):
         """Run evaluation on basic tasks."""
@@ -850,7 +852,6 @@ class HoMM_model(object):
         names = [str(t) for t in base_tasks]
         return names, losses
         
-
     def base_language_eval(self, task):
         feed_dict = self.build_feed_dict(task, call_type="base_lang_eval")
         fetches = [self.total_base_lang_loss]
@@ -1069,7 +1070,6 @@ class HoMM_model(object):
         learning_rate = self.run_config["init_learning_rate"]
         language_learning_rate = self.run_config["init_language_learning_rate"]
         meta_learning_rate = self.run_config["init_meta_learning_rate"]
-
         
         num_epochs = self.run_config["num_epochs"]
         eval_every = self.run_config["eval_every"]
@@ -1084,6 +1084,10 @@ class HoMM_model(object):
             language_lr_decay = self.run_config["language_lr_decay"]
             min_language_learning_rate = self.run_config["min_language_learning_rate"]
 
+        if not(self.architecture_config["persistent_task_reps"]):
+            self.update_base_task_embeddings()  # make sure we're up to date
+            self.update_meta_task_embeddings()
+
         self.run_eval(epoch=0)
 
         tasks = self.base_train_tasks + self.meta_class_train_tasks + self.meta_map_train_tasks
@@ -1097,6 +1101,7 @@ class HoMM_model(object):
             for task_i in order:
                 task = tasks[task_i]
                 task_type = task_types[task_i]
+
                 if task_type == "base":
                     self.base_train_step(task, learning_rate)
                     if train_language:
@@ -1106,11 +1111,11 @@ class HoMM_model(object):
                 elif task_type == "meta_class":
                     self.meta_class_train_step(task, meta_learning_rate)
                     if train_language:
-                        self.meta_class_lang_train_step(task, meta_learning_rate)
+                        self.meta_class_lang_train_step(task, language_learning_rate)
                 else: 
                     self.meta_map_train_step(task, meta_learning_rate)
                     if train_language:
-                        self.meta_map_lang_train_step(task, meta_learning_rate)
+                        self.meta_map_lang_train_step(task, languag_learning_rate)
 
             if not(self.architecture_config["persistent_task_reps"]):
                 self.update_base_task_embeddings()  # make sure we're up to date
