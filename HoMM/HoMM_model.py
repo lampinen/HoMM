@@ -94,6 +94,12 @@ def default_meta_loss(outputs, targets):
     return tf.reduce_mean(batch_losses)
 
 
+def default_meta_class_loss(logits, targets):
+    batch_losses = tf.nn.sigmoid_cross_entropy_with_logits(
+        labels=targets, logits=logits)
+    return tf.reduce_mean(batch_losses)
+
+
 def _pad(l, length, pad_token="PAD"):
     return [pad_token]*(length - len(l)) + l
 
@@ -110,7 +116,7 @@ class HoMM_model(object):
     def __init__(self, run_config, architecture_config=None,
                  input_processor=None, target_processor=None,
                  output_processor=None, meta_class_processor=None,
-                 base_loss=None, meta_loss=None):
+                 base_loss=None, meta_loss=None, meta_class_loss=None):
         """Set up data structures, build the network.
         
         The child classes should call this with a super call, overriding the
@@ -159,7 +165,8 @@ class HoMM_model(object):
             output_processor=output_processor,
             meta_class_processor=meta_class_processor,
             base_loss=base_loss,
-            meta_loss=meta_loss)
+            meta_loss=meta_loss,
+            meta_class_loss=meta_class_loss)
         self._post_build_calls()
         self._sess_and_init()
 
@@ -259,7 +266,8 @@ class HoMM_model(object):
 
     def _build_architecture(self, architecture_config, input_processor,
                             target_processor, output_processor, 
-                            meta_class_processor, base_loss, meta_loss):
+                            meta_class_processor, base_loss, meta_loss,
+                            meta_class_loss):
         self.architecture_config = architecture_config
         self.memory_buffer_size = architecture_config["memory_buffer_size"]
         self.meta_batch_size = architecture_config["meta_batch_size"]
@@ -608,7 +616,9 @@ class HoMM_model(object):
 
         self.meta_class_raw_output = _task_network(self.meta_class_task_params,
                                                    meta_input_embeddings)
-        self.meta_class_output = tf.nn.sigmoid(self.meta_class_raw_output)
+        self.meta_class_output_logits = tf.matmul(
+            self.meta_class_raw_output, meta_class_processor_var)
+        self.meta_class_output = tf.nn.sigmoid(self.meta_class_output_logits)
 
         self.meta_map_output = _task_network(self.meta_map_task_params,
                                              meta_input_embeddings) 
@@ -620,6 +630,8 @@ class HoMM_model(object):
 
         self.meta_cached_emb_raw_output = _task_network(
             self.cached_emb_task_params, meta_input_embeddings)
+        self.meta_class_cached_emb_output_logits = tf.matmul(
+            self.meta_cached_emb_raw_output, meta_class_processor_var)
 
         if self.run_config["train_language"]:
             self.base_lang_raw_output = _task_network(self.lang_task_params,
@@ -635,6 +647,8 @@ class HoMM_model(object):
             base_loss = default_base_loss
         if meta_loss is None:
             meta_loss = default_meta_loss
+        if meta_class_loss is None:
+            meta_class_loss = default_meta_class_loss
 
         self.total_base_loss = base_loss(self.base_output, self.base_target_ph) 
 
@@ -642,8 +656,8 @@ class HoMM_model(object):
         self.total_base_fed_emb_loss = base_loss(self.base_output_fed_emb,
                                                  self.base_target_ph) 
 
-        self.total_meta_class_loss = meta_loss(self.meta_class_output,
-                                               processed_class) 
+        self.total_meta_class_loss = meta_class_loss(
+            self.meta_class_output_logits, self.meta_class_ph) 
 
         self.total_meta_map_loss = meta_loss(self.meta_map_output,
                                              meta_target_embeddings) 
@@ -652,8 +666,8 @@ class HoMM_model(object):
         self.total_base_cached_emb_loss = base_loss(
             self.base_cached_emb_output, self.base_target_ph) 
 
-        self.total_meta_class_cached_emb_loss = meta_loss(
-            self.meta_cached_emb_raw_output, processed_class) 
+        self.total_meta_class_cached_emb_loss = meta_class_loss(
+            self.meta_class_cached_emb_output_logits, self.meta_class_ph) 
 
         self.total_meta_map_cached_emb_loss = meta_loss(
             self.meta_map_output, meta_target_embeddings) 
