@@ -805,8 +805,12 @@ class HoMM_model(object):
             meta_input_indices = meta_dataset[train_or_eval]["in"]
             feed_dict[self.meta_input_indices_ph] = meta_input_indices
             if train_or_eval == "train":
+                if len(meta_input_indices):
+                    meta_batch_size = len(meta_input_indices) // 2
+                else:
+                    meta_batch_size = self.meta_batch_size
                 guess_mask = self._random_guess_mask(
-                    len(meta_input_indices))
+                    len(meta_input_indices), meta_batch_size=meta_batch_size)
             else:
                 guess_mask = meta_dataset["eval"]["gm"]  # eval on the right tasks
             feed_dict[self.guess_input_mask_ph] = guess_mask 
@@ -899,6 +903,12 @@ class HoMM_model(object):
     def get_language_embedding(self, intified_task):
         feed_dict = self.build_feed_dict(task, call_type="base_lang_eval")
         res = self.sess.run(self.language_function_emb, feed_dict=feed_dict)
+        return res
+
+    def get_base_cached_embedding(self, task):
+        _, _, task_index = self.base_task_lookup(task)
+        feed_dict = {self.task_index_ph: [task_index]} 
+        res = self.sess.run(self.lookup_cached_emb, feed_dict=feed_dict)
         return res
 
     def meta_class_loss_eval(self, meta_task):
