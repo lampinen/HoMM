@@ -1,11 +1,12 @@
 from itertools import permutations
+
 from copy import deepcopy
 
 import numpy as np
 import tensorflow as tf
 
 from HoMM import HoMM_model
-from HoMM.configs import default_run_config
+from HoMM.configs import default_run_config, default_architecture_config
 import polynomials
 
 run_config = default_run_config.default_run_config
@@ -26,9 +27,21 @@ run_config.update({
     "new_meta_mappings": ["add_%f" % 2., "add_%f" % -2., "mult_%f" % 2., "mult_%f" % -2.],
 })
 
+architecture_config = default_architecture_config.default_architecture_config
+if False:  # enable for persistent reps
+    architecture_config.update({
+        "persistent_task_reps": True,
+        "combined_emb_guess_weight": "varied",
+        "emb_match_loss_weight": 0.2,
+    })
+    run_config.update({
+        "output_dir": "polynomials_results_persistent/",
+    })
+
 class poly_HoMM_model(HoMM_model.HoMM_model):
     def __init__(self, run_config=None):
-        super(poly_HoMM_model, self).__init__(run_config=run_config)
+        super(poly_HoMM_model, self).__init__(
+            architecture_config=architecture_config, run_config=run_config)
 
     def _pre_build_calls(self):
         # set up the base tasks

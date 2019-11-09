@@ -485,8 +485,7 @@ class HoMM_model(object):
             def _get_combined_embedding_and_match_loss(guess_embedding, task_index,
                                                        guess_weight,
                                                        target_net=False):
-                cached_embedding = _get_persistent_embeddings(task_index,
-                                                              target_net=target_net)
+                cached_embedding = _get_persistent_embeddings(task_index)
                 if guess_weight == "varied":
                     guess_weight = tf.random_uniform([], dtype=tf.float32)
 
@@ -826,7 +825,7 @@ class HoMM_model(object):
             feed_dict[self.feed_embedding_ph] = fed_embedding
         elif call_type == "lang":
             feed_dict[self.language_input_ph] = self.intify_task(task_name)
-        elif call_type == "cached":
+        if call_type == "cached" or self.architecture_config["persistent_task_reps"]:
             feed_dict[self.task_index_ph] = [task_index]
 
         if train_or_eval == "train":
