@@ -504,6 +504,9 @@ class HoMM_model(object):
         meta_target_embeddings = _get_persistent_embeddings(
             self.meta_target_indices_ph)
 
+        self.meta_input_embeddings = meta_input_embeddings 
+        self.meta_target_embeddings = meta_target_embeddings 
+
         self.meta_class_guess_emb = _meta_network(meta_input_embeddings,
                                                   processed_class)
         self.meta_map_guess_emb = _meta_network(meta_input_embeddings,
@@ -669,7 +672,7 @@ class HoMM_model(object):
             self.meta_class_cached_emb_output_logits, self.meta_class_ph) 
 
         self.total_meta_map_cached_emb_loss = meta_loss(
-            self.meta_map_output, meta_target_embeddings) 
+            self.meta_cached_emb_raw_output, meta_target_embeddings) 
 
         if self.architecture_config["persistent_task_reps"]: # Add the emb_match losses
             self.total_base_loss += self.base_emb_match_loss
@@ -894,13 +897,12 @@ class HoMM_model(object):
         return res
 
     def get_base_guess_embedding(self, task):
-        feed_dict = self.build_feed_dict(task, call_type="base_standard_train")
-        feed_dict[self.guess_input_mask_ph][:] = 1
+        feed_dict = self.build_feed_dict(task, call_type="base_standard_eval")
         res = self.sess.run(self.base_guess_emb, feed_dict=feed_dict)
         return res
 
     def get_language_embedding(self, intified_task):
-        feed_dict = self.build_feed_dict(task, call_type="base_lang_train")
+        feed_dict = self.build_feed_dict(task, call_type="base_lang_eval")
         res = self.sess.run(self.language_function_emb, feed_dict=feed_dict)
         return res
 
@@ -936,7 +938,7 @@ class HoMM_model(object):
 
     def get_meta_guess_embedding(self, meta_task, meta_class):
         """Note: cached base embeddings must be up to date!"""
-        call_type = "metaclass_standard_train" if meta_class else "metamap_standard_train"
+        call_type = "metaclass_standard_eval" if meta_class else "metamap_standard_eval"
         feed_dict = self.build_feed_dict(meta_task, call_type=call_type)
         if meta_class:
             fetch = self.meta_class_guess_emb 
@@ -956,6 +958,7 @@ class HoMM_model(object):
         names = []
         losses = []
         i = 0
+
         for train_or_eval in ["train", "eval"]:
             for (task, other) in self.meta_pairings[meta_mapping][train_or_eval]:
                 mapped_embedding = result_embeddings[i, :]
@@ -1138,7 +1141,7 @@ class HoMM_model(object):
                 else: 
                     self.meta_map_train_step(task, meta_learning_rate)
                     if train_language:
-                        self.meta_map_lang_train_step(task, languag_learning_rate)
+                        self.meta_map_lang_train_step(task, language_learning_rate)
 
             if not(self.architecture_config["persistent_task_reps"]):
                 self.update_base_task_embeddings()  # make sure we're up to date
