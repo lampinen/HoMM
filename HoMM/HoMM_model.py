@@ -894,13 +894,13 @@ class HoMM_model(object):
         return res
 
     def get_base_guess_embedding(self, task):
-        feed_dict = self.build_feed_dict(task, call_type="base_standard_eval")
+        feed_dict = self.build_feed_dict(task, call_type="base_standard_train")
         feed_dict[self.guess_input_mask_ph][:] = 1
         res = self.sess.run(self.base_guess_emb, feed_dict=feed_dict)
         return res
 
     def get_language_embedding(self, intified_task):
-        feed_dict = self.build_feed_dict(task, call_type="base_lang_eval")
+        feed_dict = self.build_feed_dict(task, call_type="base_lang_train")
         res = self.sess.run(self.language_function_emb, feed_dict=feed_dict)
         return res
 
@@ -936,7 +936,7 @@ class HoMM_model(object):
 
     def get_meta_guess_embedding(self, meta_task, meta_class):
         """Note: cached base embeddings must be up to date!"""
-        call_type = "metaclass_standard_eval" if meta_class else "metamap_standard_eval"
+        call_type = "metaclass_standard_train" if meta_class else "metamap_standard_train"
         feed_dict = self.build_feed_dict(meta_task, call_type=call_type)
         if meta_class:
             fetch = self.meta_class_guess_emb 
