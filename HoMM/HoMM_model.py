@@ -463,7 +463,7 @@ class HoMM_model(object):
                 tf.float32,
                 [None, architecture_config["z_dim"]])
 
-            self.update_embeddings = tf.scatter_nd_update(
+            self.update_embeddings = tf.scatter_update(
                 self.persistent_embeddings,
                 self.task_index_ph,
                 self.update_persistent_embeddings_ph)
@@ -625,6 +625,9 @@ class HoMM_model(object):
         self.meta_map_output = _task_network(self.meta_map_task_params,
                                              meta_input_embeddings) 
 
+        self.meta_map_output_fed_emb = _task_network(self.fed_emb_task_params,
+                                                     meta_input_embeddings) 
+
         self.base_cached_emb_raw_output = _task_network(
             self.cached_emb_task_params, self.processed_input)
         self.base_cached_emb_output = output_processor(
@@ -664,6 +667,8 @@ class HoMM_model(object):
         self.total_meta_map_loss = meta_loss(self.meta_map_output,
                                              meta_target_embeddings) 
 
+        self.total_meta_map_fed_emb_loss = meta_loss(self.meta_map_output_fed_emb,
+                                                     meta_target_embeddings) 
 
         self.total_base_cached_emb_loss = base_loss(
             self.base_cached_emb_output, self.base_target_ph) 
@@ -807,7 +812,7 @@ class HoMM_model(object):
             meta_input_indices = meta_dataset[train_or_eval]["in"]
             feed_dict[self.meta_input_indices_ph] = meta_input_indices
             if train_or_eval == "train":
-                if len(meta_input_indices):
+                if len(meta_input_indices) < self.meta_batch_size:
                     meta_batch_size = len(meta_input_indices) // 2
                 else:
                     meta_batch_size = self.meta_batch_size
@@ -853,11 +858,8 @@ class HoMM_model(object):
 
     def base_eval(self, task):
         feed_dict = self.build_feed_dict(task, call_type="base_cached_eval")
-        guess_emb = self.get_base_guess_embedding(task)
-        fetches = [self.total_base_loss, self.lookup_cached_emb]
+        fetches = [self.total_base_loss]
         res = self.sess.run(fetches, feed_dict=feed_dict)
-#        print(res[1])
-#        print(guess_emb[0])
         return res
 
     def run_base_eval(self):
