@@ -37,6 +37,11 @@ if False:  # enable for persistent reps
     run_config.update({
         "output_dir": "polynomials_results_persistent/",
     })
+if False:  # enable for no_meta 
+    run_config.update({
+        "train_meta": False,
+        "output_dir": run_config["output_dir"][:-1] + "no_meta/", 
+    })
 
 class poly_HoMM_model(HoMM_model.HoMM_model):
     def __init__(self, run_config=None):

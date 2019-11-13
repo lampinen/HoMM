@@ -1048,21 +1048,28 @@ class HoMM_model(object):
         self.saver.restore(self.sess, filename)
 
     def run_eval(self, epoch, print_losses=True):
+        train_meta = self.run_config["train_meta"]
+
         base_names, base_losses = self.run_base_eval()
-        meta_names, meta_losses = self.run_meta_loss_eval()
-        meta_true_names, meta_true_losses = self.run_meta_true_eval()
+        
+        if train_meta:
+            meta_names, meta_losses = self.run_meta_loss_eval()
+            meta_true_names, meta_true_losses = self.run_meta_true_eval()
+        else:
+            meta_names, meta_losses = [], []
 
         if epoch == 0:
-            # set up format strings
+            # set up format string
             self.loss_format = ", ".join(["%f" for _ in base_names + meta_names]) + "\n"
-            self.meta_true_loss_format = ", ".join(["%f" for _ in meta_true_names]) + "\n"
 
-            # write headers and overwrite existing files 
+            # write headers and overwrite existing file 
             with open(self.run_config["loss_filename"], "w") as fout:
                 fout.write("epoch, " + ", ".join(base_names + meta_names) + "\n")
-            with open(self.run_config["meta_filename"], "w") as fout:
-                fout.write("epoch, " + ", ".join(meta_true_names) + "\n")
 
+            if train_meta:
+                self.meta_true_loss_format = ", ".join(["%f" for _ in meta_true_names]) + "\n"
+                with open(self.run_config["meta_filename"], "w") as fout:
+                    fout.write("epoch, " + ", ".join(meta_true_names) + "\n")
 
         epoch_s = "%i, " % epoch
         with open(self.run_config["loss_filename"], "a") as fout:
@@ -1073,10 +1080,11 @@ class HoMM_model(object):
         if print_losses:
             print(formatted_losses)
 
-        with open(self.run_config["meta_filename"], "a") as fout:
-            formatted_losses = epoch_s + (self.meta_true_loss_format % tuple(
-                meta_true_losses))
-            fout.write(formatted_losses)
+        if train_meta:
+            with open(self.run_config["meta_filename"], "a") as fout:
+                formatted_losses = epoch_s + (self.meta_true_loss_format % tuple(
+                    meta_true_losses))
+                fout.write(formatted_losses)
 
         if self.run_config["train_language"]:
             lang_names, lang_losses = self.run_lang_eval()
@@ -1093,6 +1101,8 @@ class HoMM_model(object):
     def run_training(self):
         """Train model."""
         train_language = self.run_config["train_language"]
+        train_meta = self.run_config["train_meta"]
+
         eval_every = self.run_config["eval_every"]
         
         learning_rate = self.run_config["init_learning_rate"]
@@ -1114,12 +1124,17 @@ class HoMM_model(object):
 
         if not(self.architecture_config["persistent_task_reps"]):
             self.update_base_task_embeddings()  # make sure we're up to date
-            self.update_meta_task_embeddings()
+            if train_meta:
+                self.update_meta_task_embeddings()
 
         self.run_eval(epoch=0)
 
-        tasks = self.base_train_tasks + self.meta_class_train_tasks + self.meta_map_train_tasks
-        task_types = ["base"] * len(self.base_train_tasks) + ["meta_class"] * len(self.meta_class_train_tasks) + ["meta_map"] * len(self.meta_map_train_tasks)
+        if train_meta:
+            tasks = self.base_train_tasks + self.meta_class_train_tasks + self.meta_map_train_tasks
+            task_types = ["base"] * len(self.base_train_tasks) + ["meta_class"] * len(self.meta_class_train_tasks) + ["meta_map"] * len(self.meta_map_train_tasks)
+        else:
+            tasks = self.base_train_tasks
+            task_types = ["base"] * len(self.base_train_tasks)
 
         for epoch in range(1, num_epochs+1):
             if epoch % refresh_mem_buffs_every == 0:
@@ -1147,7 +1162,8 @@ class HoMM_model(object):
 
             if not(self.architecture_config["persistent_task_reps"]):
                 self.update_base_task_embeddings()  # make sure we're up to date
-                self.update_meta_task_embeddings()
+                if train_meta:
+                    self.update_meta_task_embeddings()
 
             if epoch % eval_every == 0:
                 self.run_eval(epoch)
