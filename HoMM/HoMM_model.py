@@ -71,7 +71,7 @@ def default_target_processor(targets, IO_num_hidden, z_dim,
                                             shape=[z_dim, output_size],
                                             initializer=tf.constant_initializer(target_processor_nontf[:, :-1]))
         meta_class_processor = tf.get_variable('meta_class_processor',
-                                            shape=[z_dim, output_size],
+                                            shape=[z_dim, 1],
                                             initializer=tf.constant_initializer(target_processor_nontf[:, -1:]))
         
         processed_targets = tf.matmul(targets, tf.transpose(target_processor))
@@ -343,7 +343,7 @@ class HoMM_model(object):
         if outcome_shape is not None and outcome_processor is None:
             outcome_processor = lambda x: default_outcome_processor(
                 x, IO_num_hidden, z_dim, internal_nonlinearity)
-            processed_outcomes = outcome_processor(
+            processed_outcomes = outcome_processor(self.base_outcome_ph)
 
         ## Meta: (Input, Output) -> Z (function embedding)
         self.task_index_ph = tf.placeholder(tf.int32, [None,])  # if using persistent task reps
@@ -676,23 +676,23 @@ class HoMM_model(object):
             self.meta_map_lang_output = _task_network(self.lang_task_params,
                                                       meta_input_embeddings) 
 
-        if self.run_config["output_masking"]:
-	    # E.g. in RL we have to mask base output in loss because can only
-	    # learn about the action actually taken 
-	    self.base_target_mask_ph = tf.placeholder(
-		tf.bool, shape=[None, output_size])
+        if self.architecture_config["output_masking"]:
+            # E.g. in RL we have to mask base output in loss because can only
+            # learn about the action actually taken 
+            self.base_target_mask_ph = tf.placeholder(
+                tf.bool, shape=[None] + output_shape)
 
             self.base_unmasked_output = self.base_output
-	    self.base_output = tf.boolean_mask(self.base_unmasked_output,
-					       self.base_target_mask_ph)
+            self.base_output = tf.boolean_mask(self.base_unmasked_output,
+                                               self.base_target_mask_ph)
 
             self.base_fed_emb_unmasked_output = self.base_fed_emb_output
-	    self.base_fed_emb_output = tf.boolean_mask(self.base_fed_emb_unmasked_output,
-					       self.base_target_mask_ph)
+            self.base_fed_emb_output = tf.boolean_mask(self.base_fed_emb_unmasked_output,
+                                               self.base_target_mask_ph)
 
             self.base_cached_emb_unmasked_output = self.base_cached_emb_output
-	    self.base_cached_emb_output = tf.boolean_mask(self.base_cached_emb_unmasked_output,
-					       self.base_target_mask_ph)
+            self.base_cached_emb_output = tf.boolean_mask(self.base_cached_emb_unmasked_output,
+                                                          self.base_target_mask_ph)
 
         # allow any task-specific alterations before computing the losses
         self._pre_loss_calls() 
@@ -808,7 +808,7 @@ class HoMM_model(object):
                 self.meta_datasets[task],
                 self.task_indices[task])
 
-    def fill_buffers(self, num_data_points=1, include_new=False):
+    def fill_buffers(self, num_data_points=1):
         """Add new "experiences" to memory buffers."""
         raise NotImplementedError("fill_buffers() should be overridden by the child class!")
 
