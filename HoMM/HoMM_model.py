@@ -915,18 +915,20 @@ class HoMM_model(object):
         feed_dict = self.build_feed_dict(task, call_type="base_cached_eval")
         fetches = [self.total_base_loss]
         res = self.sess.run(fetches, feed_dict=feed_dict)
-        return res
+        name = str(task)
+        return [name], res
 
     def run_base_eval(self):
         """Run evaluation on basic tasks."""
         base_tasks = self.base_train_tasks + self.base_eval_tasks 
 
+        names = []
         losses = [] 
         for task in base_tasks:
-            res = self.base_eval(task)
-            losses.append(res[0])
+            these_names, these_losses = self.base_eval(task)
+            names += these_names
+            losses += these_losses
 
-        names = [str(t) for t in base_tasks]
         return names, losses
         
     def base_language_eval(self, task):
