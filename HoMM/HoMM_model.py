@@ -49,7 +49,9 @@ class memory_buffer(object):
 
 
 # default IO nets are those used for the original polynomials experiments
-def default_input_processor(input_ph, IO_num_hidden, z_dim, internal_nonlinearity):
+def default_input_processor(input_ph, IO_num_hidden, z_dim,
+                            internal_nonlinearity, reuse=False):
+    with tf.variable_scope('input_processor', reuse=reuse):
         input_processing_1 = slim.fully_connected(input_ph, IO_num_hidden,
                                                   activation_fn=internal_nonlinearity)
 
@@ -58,25 +60,36 @@ def default_input_processor(input_ph, IO_num_hidden, z_dim, internal_nonlinearit
 
         processed_input = slim.fully_connected(input_processing_2, z_dim,
                                                activation_fn=None)
-        return processed_input
+    return processed_input
 
-
-def default_target_processor(targets, IO_num_hidden, z_dim, internal_nonlinearity):
-    output_size = targets.get_shape()[-1]
-    target_processor_nontf = random_orthogonal(z_dim)[:, :output_size + 1]
-    target_processor = tf.get_variable('target_processor',
-                                        shape=[z_dim, output_size],
-                                        initializer=tf.constant_initializer(target_processor_nontf[:, :-1]))
-    meta_class_processor = tf.get_variable('meta_class_processor',
-                                        shape=[z_dim, output_size],
-                                        initializer=tf.constant_initializer(target_processor_nontf[:, -1:]))
-    
-    processed_targets = tf.matmul(targets, tf.transpose(target_processor))
+def default_target_processor(targets, IO_num_hidden, z_dim,
+                             internal_nonlinearity, reuse=False):
+    with tf.variable_scope('target_processor', reuse=reuse):
+        output_size = targets.get_shape()[-1]
+        target_processor_nontf = random_orthogonal(z_dim)[:, :output_size + 1]
+        target_processor = tf.get_variable('target_processor',
+                                            shape=[z_dim, output_size],
+                                            initializer=tf.constant_initializer(target_processor_nontf[:, :-1]))
+        meta_class_processor = tf.get_variable('meta_class_processor',
+                                            shape=[z_dim, output_size],
+                                            initializer=tf.constant_initializer(target_processor_nontf[:, -1:]))
+        
+        processed_targets = tf.matmul(targets, tf.transpose(target_processor))
     return processed_targets, target_processor, meta_class_processor
 
+def default_outcome_processor(outcomes, IO_num_hidden, z_dim,
+                              internal_nonlinearity, reuse=False):
+    with tf.variable_scope('outcome_processor', reuse=reuse):
+        outcome_processing_1 = slim.fully_connected(
+            outcomes, IO_num_hidden, activation_fn=internal_nonlinearity)
+        outcome_processing_2 = slim.fully_connected(
+            outcome_processing_1, IO_num_hidden, activation_fn=internal_nonlinearity)
+        res = slim.fully_connected(outcome_processing_2, z_dim,
+                                    activation_fn=internal_nonlinearity)
+    return res
 
-def default_meta_class_processor(targets, meta_class_processor):
-    processed_targets = tf.matmul(targets, tf.transpose(meta_class_processor))
+def default_meta_class_processor(targets, meta_class_processor_var):
+    processed_targets = tf.matmul(targets, tf.transpose(meta_class_processor_var))
     return processed_targets
 
 
@@ -115,8 +128,9 @@ class HoMM_model(object):
     """A base Homoiconic Meta-mapping model."""
     def __init__(self, run_config, architecture_config=None,
                  input_processor=None, target_processor=None,
-                 output_processor=None, meta_class_processor=None,
-                 base_loss=None, meta_loss=None, meta_class_loss=None):
+                 output_processor=None, outcome_processor=None,
+                 meta_class_processor=None, base_loss=None,
+                 meta_loss=None, meta_class_loss=None):
         """Set up data structures, build the network.
         
         The child classes should call this with a super call, overriding the
@@ -163,6 +177,7 @@ class HoMM_model(object):
             input_processor=input_processor,
             target_processor=target_processor,
             output_processor=output_processor,
+            outcome_processor=outcome_processor,
             meta_class_processor=meta_class_processor,
             base_loss=base_loss,
             meta_loss=meta_loss,
@@ -265,9 +280,9 @@ class HoMM_model(object):
         pass
 
     def _build_architecture(self, architecture_config, input_processor,
-                            target_processor, output_processor, 
-                            meta_class_processor, base_loss, meta_loss,
-                            meta_class_loss):
+                            target_processor, output_processor,
+                            outcome_processor, meta_class_processor, base_loss, 
+                            meta_loss, meta_class_loss):
         self.architecture_config = architecture_config
         self.memory_buffer_size = architecture_config["memory_buffer_size"]
         self.meta_batch_size = architecture_config["meta_batch_size"]
@@ -283,11 +298,16 @@ class HoMM_model(object):
         # base task input (polynomials, need to refactor)
         input_shape = architecture_config["input_shape"]
         output_shape = architecture_config["output_shape"]
+        outcome_shape = architecture_config["outcome_shape"]
 
         self.base_input_ph = tf.placeholder(
             tf.float32, shape=[None] + input_shape)
         self.base_target_ph = tf.placeholder(
             tf.float32, shape=[None] + output_shape)
+
+        if outcome_shape is not None: # if outcomes seen by M != targets
+            self.base_outcome_ph = tf.placeholder(
+                tf.float32, shape=[None] + outcome_shape)
 
         self.lr_ph = tf.placeholder(tf.float32)
         self.keep_prob_ph = tf.placeholder(tf.float32) # dropout keep prob
@@ -319,6 +339,11 @@ class HoMM_model(object):
         if output_processor is None:
             output_processor = lambda x: default_output_processor(
                 x, target_processor_var)
+
+        if outcome_shape is not None and outcome_processor is None:
+            outcome_processor = lambda x: default_outcome_processor(
+                x, IO_num_hidden, z_dim, internal_nonlinearity)
+            processed_outcomes = outcome_processor(
 
         ## Meta: (Input, Output) -> Z (function embedding)
         self.task_index_ph = tf.placeholder(tf.int32, [None,])  # if using persistent task reps
@@ -364,10 +389,15 @@ class HoMM_model(object):
                                                        activation_fn=None)
                 return guess_embedding
 
+        if outcome_shape is not None:  # outcomes seen by M != targets
+            self.base_guess_emb = _meta_network(self.processed_input,
+                                                processed_outcomes,
+                                                reuse=False)
 
-        self.base_guess_emb = _meta_network(self.processed_input,
-                                            processed_targets,
-                                            reuse=False)
+        else:
+            self.base_guess_emb = _meta_network(self.processed_input,
+                                                processed_targets,
+                                                reuse=False)
 
         # TODO: Use it or lose it
         # for combination tasks 
@@ -611,10 +641,10 @@ class HoMM_model(object):
                                              self.processed_input)
         self.base_output = output_processor(self.base_raw_output)
 
-        self.base_raw_output_fed_emb = _task_network(self.fed_emb_task_params,
+        self.base_raw_fed_emb_output = _task_network(self.fed_emb_task_params,
                                                      self.processed_input)
-        self.base_output_fed_emb = output_processor(
-            self.base_raw_output_fed_emb)
+        self.base_fed_emb_output = output_processor(
+            self.base_raw_fed_emb_output)
 
         self.meta_class_raw_output = _task_network(self.meta_class_task_params,
                                                    meta_input_embeddings)
@@ -625,7 +655,7 @@ class HoMM_model(object):
         self.meta_map_output = _task_network(self.meta_map_task_params,
                                              meta_input_embeddings) 
 
-        self.meta_map_output_fed_emb = _task_network(self.fed_emb_task_params,
+        self.meta_map_fed_emb_output = _task_network(self.fed_emb_task_params,
                                                      meta_input_embeddings) 
 
         self.base_cached_emb_raw_output = _task_network(
@@ -646,6 +676,27 @@ class HoMM_model(object):
             self.meta_map_lang_output = _task_network(self.lang_task_params,
                                                       meta_input_embeddings) 
 
+        if self.run_config["output_masking"]:
+	    # E.g. in RL we have to mask base output in loss because can only
+	    # learn about the action actually taken 
+	    self.base_target_mask_ph = tf.placeholder(
+		tf.bool, shape=[None, output_size])
+
+            self.base_unmasked_output = self.base_output
+	    self.base_output = tf.boolean_mask(self.base_unmasked_output,
+					       self.base_target_mask_ph)
+
+            self.base_fed_emb_unmasked_output = self.base_fed_emb_output
+	    self.base_fed_emb_output = tf.boolean_mask(self.base_fed_emb_unmasked_output,
+					       self.base_target_mask_ph)
+
+            self.base_cached_emb_unmasked_output = self.base_cached_emb_output
+	    self.base_cached_emb_output = tf.boolean_mask(self.base_cached_emb_unmasked_output,
+					       self.base_target_mask_ph)
+
+        # allow any task-specific alterations before computing the losses
+        self._pre_loss_calls() 
+
         ## Losses 
 
         if base_loss is None:
@@ -658,7 +709,7 @@ class HoMM_model(object):
         self.total_base_loss = base_loss(self.base_output, self.base_target_ph) 
 
 
-        self.total_base_fed_emb_loss = base_loss(self.base_output_fed_emb,
+        self.total_base_fed_emb_loss = base_loss(self.base_fed_emb_output,
                                                  self.base_target_ph) 
 
         self.total_meta_class_loss = meta_class_loss(
@@ -667,7 +718,7 @@ class HoMM_model(object):
         self.total_meta_map_loss = meta_loss(self.meta_map_output,
                                              meta_target_embeddings) 
 
-        self.total_meta_map_fed_emb_loss = meta_loss(self.meta_map_output_fed_emb,
+        self.total_meta_map_fed_emb_loss = meta_loss(self.meta_map_fed_emb_output,
                                                      meta_target_embeddings) 
 
         self.total_base_cached_emb_loss = base_loss(
@@ -706,6 +757,10 @@ class HoMM_model(object):
             self.base_lang_train_op = optimizer.minimize(self.total_base_lang_loss)
             self.meta_map_lang_train_op = optimizer.minimize(self.total_meta_map_lang_loss)
 
+    def _pre_loss_calls(self):
+        """Called after generating the outputs, but before generating losses."""
+        pass
+
     def _sess_and_init(self):
         # Saver
         self.saver = tf.train.Saver()
@@ -716,7 +771,7 @@ class HoMM_model(object):
         self.sess = tf.Session(config=sess_config)
         self.sess.run(tf.global_variables_initializer())
         self.fill_buffers(num_data_points=self.architecture_config["memory_buffer_size"])
-       
+
         save_config(self.run_config["run_config_filename"], self.run_config) 
         save_config(self.run_config["architecture_config_filename"],
                     self.architecture_config) 

@@ -4,6 +4,9 @@ default_architecture_config = {
    "input_shape": [4],
    "output_shape": [1],
 
+   "outcome_shape": None,  # If not None, allows outcomes != targets, for RL etc.
+   "output_masking": False,  # If True, enables output masking, for RL tasks
+
    "IO_num_hidden": 128,
 
    "z_dim": 512,
