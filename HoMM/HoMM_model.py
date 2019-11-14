@@ -694,6 +694,13 @@ class HoMM_model(object):
             self.base_cached_emb_output = tf.boolean_mask(self.base_cached_emb_unmasked_output,
                                                           self.base_target_mask_ph)
 
+            self.base_unmasked_targets = self.base_target_ph
+            self.base_targets = tf.boolean_mask(self.base_unmasked_targets,
+                                                self.base_target_mask_ph)
+        else: 
+            self.base_targets = self.base_target_ph
+
+
         # allow any task-specific alterations before computing the losses
         self._pre_loss_calls() 
 
@@ -706,11 +713,11 @@ class HoMM_model(object):
         if meta_class_loss is None:
             meta_class_loss = default_meta_class_loss
 
-        self.total_base_loss = base_loss(self.base_output, self.base_target_ph) 
+        self.total_base_loss = base_loss(self.base_output, self.base_targets) 
 
 
         self.total_base_fed_emb_loss = base_loss(self.base_fed_emb_output,
-                                                 self.base_target_ph) 
+                                                 self.base_targets) 
 
         self.total_meta_class_loss = meta_class_loss(
             self.meta_class_output_logits, self.meta_class_ph) 
@@ -722,7 +729,7 @@ class HoMM_model(object):
                                                      meta_target_embeddings) 
 
         self.total_base_cached_emb_loss = base_loss(
-            self.base_cached_emb_output, self.base_target_ph) 
+            self.base_cached_emb_output, self.base_targets) 
 
         self.total_meta_class_cached_emb_loss = meta_class_loss(
             self.meta_class_cached_emb_output_logits, self.meta_class_ph) 
@@ -737,7 +744,7 @@ class HoMM_model(object):
 
         if self.run_config["train_language"]:
             self.total_base_lang_loss = base_loss(self.base_lang_output,
-                                                  self.base_target_ph) 
+                                                  self.base_targets) 
 
             self.total_meta_map_lang_loss = meta_loss(self.meta_map_lang_output,
                                                       meta_target_embeddings) 
