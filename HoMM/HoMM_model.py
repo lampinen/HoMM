@@ -918,23 +918,24 @@ class HoMM_model(object):
         feed_dict = self.build_feed_dict(task, lr=lr, call_type="base_lang_train")
         self.sess.run(self.base_lang_train_op, feed_dict=feed_dict)
 
-    def base_eval(self, task):
+    def base_eval(self, task, train_or_eval):
         feed_dict = self.build_feed_dict(task, call_type="base_cached_eval")
         fetches = [self.total_base_loss]
         res = self.sess.run(fetches, feed_dict=feed_dict)
-        name = str(task)
+        name = str(task) + ":" + train_or_eval
         return [name], res
 
     def run_base_eval(self):
         """Run evaluation on basic tasks."""
-        base_tasks = self.base_train_tasks + self.base_eval_tasks 
-
         names = []
         losses = [] 
-        for task in base_tasks:
-            these_names, these_losses = self.base_eval(task)
-            names += these_names
-            losses += these_losses
+        for task_set, train_or_eval in zip(
+            [self.base_train_tasks, self.base_eval_tasks],
+            ["train", "eval"]):
+            for task in task_set:
+                these_names, these_losses = self.base_eval(task, train_or_eval)
+                names += these_names
+                losses += these_losses
 
         return names, losses
         
@@ -942,17 +943,19 @@ class HoMM_model(object):
         feed_dict = self.build_feed_dict(task, call_type="base_lang_eval")
         fetches = [self.total_base_lang_loss]
         res = self.sess.run(fetches, feed_dict=feed_dict)
+        name = str(task) + ":" + train_or_eval
         return res
 
     def run_base_language_eval(self):
-        base_tasks = self.base_train_tasks + self.base_eval_tasks 
-
         losses = [] 
         names = []
-        for task in tasks:
-            res = self.base_language_eval(task)
-            losses.append(res[0])
-            names.append(task_str)
+        for task_set, train_or_eval in zip(
+            [self.base_train_tasks, self.base_eval_tasks],
+            ["train", "eval"]):
+            for task in task_set:
+                these_names, these_losses = self.base_language_eval(task, train_or_eval)
+                names += these_names
+                losses += these_losses
 
         return names, losses
 
@@ -989,15 +992,19 @@ class HoMM_model(object):
     def run_meta_loss_eval(self):
         names = []
         losses = []
-        for meta_tasks, meta_class in zip([self.meta_class_train_tasks + self.meta_class_eval_tasks,
-                                          self.meta_map_train_tasks + self.meta_map_eval_tasks],
-                                         [True, False]):
+        for meta_tasks, meta_class, train_or_eval in zip(
+                [self.meta_class_train_tasks,
+                 self.meta_class_eval_tasks,
+                 self.meta_map_train_tasks,
+                 self.meta_map_eval_tasks],
+                [True, True, False, False],
+                ["train", "eval", "train", "eval"]):
             for meta_task in meta_tasks:
                 if meta_class:
                     loss = self.meta_class_loss_eval(meta_task)
                 else:
                     loss = self.meta_map_loss_eval(meta_task)
-                names.append(meta_task)
+                names.append(meta_task + ":" + train_or_eval)
                 losses.append(loss)
 
         return names, losses
