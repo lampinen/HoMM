@@ -850,6 +850,17 @@ class HoMM_model(object):
             self.base_lang_train_op = optimizer.minimize(self.total_base_lang_loss)
             self.meta_map_lang_train_op = optimizer.minimize(self.total_meta_map_lang_loss)
 
+        if self.separate_targ_net:
+            learner_vars = [v for v in tf.trainable_variables() if "target_network" not in v.name]
+            target_vars = [v for v in tf.trainable_variables() if "target_network" in v.name]
+            print(learner_vars) 
+            print(target_vars)
+            exit()
+
+            ## copy learner to target
+            self.update_target_op = [v_targ.assign(v) for v_targ, v in zip(target_vars, learner_vars)]
+
+
     def _pre_loss_calls(self):
         """Called after generating the outputs, but before generating losses."""
         pass
@@ -1255,6 +1266,10 @@ class HoMM_model(object):
                     lang_losses))
                 fout.write(formatted_losses)
 
+    def other_decays(self): 
+        """Can be overridden to change things like exploration over learning."""
+        pass
+
     def run_training(self):
         """Train model."""
         train_language = self.run_config["train_language"]
@@ -1334,3 +1349,5 @@ class HoMM_model(object):
 
                 if train_language and language_learning_rate > min_language_learning_rate:
                     language_learning_rate *= language_lr_decay
+
+                self.other_decays()
