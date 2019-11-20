@@ -858,7 +858,7 @@ class HoMM_model(object):
             exit()
 
             ## copy learner to target
-            self.update_target_op = [v_targ.assign(v) for v_targ, v in zip(target_vars, learner_vars)]
+            self.update_target_network_op = [v_targ.assign(v) for v_targ, v in zip(target_vars, learner_vars)]
 
 
     def _pre_loss_calls(self):
@@ -875,6 +875,8 @@ class HoMM_model(object):
         self.sess = tf.Session(config=sess_config)
         self.sess.run(tf.global_variables_initializer())
         self.fill_buffers(num_data_points=self.architecture_config["memory_buffer_size"])
+        if self.separate_targ_net:
+            self.sess.run(self.update_target_network_op)
 
         save_config(self.run_config["run_config_filename"], self.run_config) 
         save_config(self.run_config["architecture_config_filename"],
@@ -1266,7 +1268,7 @@ class HoMM_model(object):
                     lang_losses))
                 fout.write(formatted_losses)
 
-    def other_decays(self): 
+    def end_epoch_calls(self, epoch): 
         """Can be overridden to change things like exploration over learning."""
         pass
 
@@ -1350,4 +1352,4 @@ class HoMM_model(object):
                 if train_language and language_learning_rate > min_language_learning_rate:
                     language_learning_rate *= language_lr_decay
 
-                self.other_decays()
+            self.end_epoch_calls(epoch)
