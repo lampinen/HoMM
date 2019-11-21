@@ -287,6 +287,7 @@ class HoMM_model(object):
         self.memory_buffer_size = architecture_config["memory_buffer_size"]
         self.meta_batch_size = architecture_config["meta_batch_size"]
         self.tkp = 1. - architecture_config["train_drop_prob"] # drop prob -> keep prob
+        self.separate_targ_net = architecture_config["separate_target_network"]
 
         if self.run_config["train_language"]:
             self.vocab = architecture_config["vocab"]
@@ -322,27 +323,44 @@ class HoMM_model(object):
             input_processor = lambda x: default_input_processor(
                 x, IO_num_hidden, z_dim, internal_nonlinearity)
         self.processed_input = input_processor(self.base_input_ph)
+        if self.separate_targ_net:
+            with tf.variable_scope("target_net", reuse=False):
+                self.processed_input_tn = input_processor(self.base_input_ph)
 
         if target_processor is None:
             target_processor = lambda x: default_target_processor(
                 x, IO_num_hidden, z_dim, internal_nonlinearity)
             (processed_targets, target_processor_var,
              meta_class_processor_var) = target_processor(self.base_target_ph)
+
+            if self.separate_targ_net:
+                with tf.variable_scope("target_net", reuse=False):
+                    (processed_targets_tn, target_processor_var_tn,
+                     meta_class_processor_var_tn) = target_processor(self.base_target_ph)
         else:
             if output_processor is None or meta_class_processor is None:
                 raise ValueError("You cannot use the default output or "
                                  "meta_class processor without the default "
                                  "target processor.")
             processed_targets = target_processor(self.base_target_ph)
+            if self.separate_targ_net:
+                with tf.variable_scope("target_net", reuse=False):
+                    processed_targets_tn = target_processor(self.base_target_ph)
 
         if output_processor is None:
             output_processor = lambda x: default_output_processor(
                 x, target_processor_var)
+            if self.separate_targ_net:
+                output_processor_tn = lambda x: default_output_processor(
+                    x, target_processor_var_tn)
 
         if outcome_shape is not None and outcome_processor is None:
             outcome_processor = lambda x: default_outcome_processor(
                 x, IO_num_hidden, z_dim, internal_nonlinearity)
             processed_outcomes = outcome_processor(self.base_outcome_ph)
+            if self.separate_targ_net:
+                with tf.variable_scope("target_net", reuse=False):
+                    processed_outcomes_tn = outcome_processor(self.base_outcome_ph)
 
         ## Meta: (Input, Output) -> Z (function embedding)
         self.task_index_ph = tf.placeholder(tf.int32, [None,])  # if using persistent task reps
@@ -357,6 +375,10 @@ class HoMM_model(object):
                 x, meta_class_processor_var)
         
         processed_class = meta_class_processor(self.meta_class_ph) 
+        if self.separate_targ_net:
+            with tf.variable_scope("target_net", reuse=False):
+                processed_class = meta_class_processor(self.meta_class_ph) 
+
 
         # function embedding "guessing" network / meta network
         # {(emb_in, emb_out), ...} -> emb
@@ -392,12 +414,21 @@ class HoMM_model(object):
             self.base_guess_emb = _meta_network(self.processed_input,
                                                 processed_outcomes,
                                                 reuse=False)
+            if self.separate_targ_net:
+                with tf.variable_scope("target_net", reuse=False):
+                    self.base_guess_emb_tn = _meta_network(self.processed_input_tn,
+                                                           processed_outcomes_tn,
+                                                           reuse=False)
 
         else:
             self.base_guess_emb = _meta_network(self.processed_input,
                                                 processed_targets,
                                                 reuse=False)
-
+            if self.separate_targ_net:
+                with tf.variable_scope("target_net", reuse=False):
+                    self.base_guess_emb_tn = _meta_network(self.processed_input_tn,
+                                                           processed_targets_tn,
+                                                           reuse=False)
         # TODO: Use it or lose it
         # for combination tasks 
 #        def _combine_inputs(inputs_1, inputs_2, reuse=True):
@@ -433,6 +464,7 @@ class HoMM_model(object):
 
         ## language processing: lang -> Z
         if self.run_config["train_language"]:
+            warnings.warn("Language has not been tested in this version of the code, some debugging may be needed")
             num_hidden_language = architecture_config["num_hidden_language"]
             num_lstm_layers = architecture_config["num_lstm_layers"]
 
@@ -440,14 +472,15 @@ class HoMM_model(object):
             self.lang_keep_prob = 1. - architecture_config["lang_drop_prob"]
             self.language_input_ph = tf.placeholder(
                 tf.int32, shape=[1, self.max_sentence_len])
-            with tf.variable_scope("word_embeddings", reuse=False):
-                self.word_embeddings = tf.get_variable(
-                    "embeddings", shape=[self.vocab_size, num_hidden_language])
-            self.embedded_language = tf.nn.embedding_lookup(self.word_embeddings,
-                                                            self.language_input_ph)
 
-            def _language_network(embedded_language, reuse=True):
+            def _language_network(language_input, reuse=False):
                 """Maps from language to a function embedding"""
+                with tf.variable_scope("word_embeddings", reuse=reuse):
+                    self.word_embeddings = tf.get_variable(
+                        "embeddings", shape=[self.vocab_size, num_hidden_language])
+
+                embedded_language = tf.nn.embedding_lookup(self.word_embeddings,
+                                                           language_input)
                 with tf.variable_scope("language_processing"):
                     cells = [tf.nn.rnn_cell.LSTMCell(
                         num_hidden_language) for _ in range(num_lstm_layers)]
@@ -475,8 +508,13 @@ class HoMM_model(object):
                                                            activation_fn=None)
                 return func_embeddings
 
-            self.language_function_emb = _language_network(self.embedded_language,
-                                                           False)
+            self.language_function_emb = _language_network(self.language_input_ph,
+                                                           reuse=False)
+            if self.separate_targ_net:
+                with tf.variable_scope("target_net", reuse=False):
+                    self.language_function_emb_tn = _language_network(self.language_input_ph,
+                                                                      reuse=False)
+
 
         ## persistent/cached embeddings
         # if not architecture_config["persistent_task_reps"], these will just be updated
@@ -497,18 +535,43 @@ class HoMM_model(object):
                 self.task_index_ph,
                 self.update_persistent_embeddings_ph)
 
+        if self.separate_targ_net:
+            with tf.variable_scope("target_net", reuse=False):
+                with tf.variable_scope("persistent_cached"):
+                    self.persistent_embeddings_tn = tf.get_variable(
+                        "cached_task_embeddings",
+                        [self.num_tasks,
+                         architecture_config["z_dim"]],
+                        dtype=tf.float32)
+
         # don't update cached embeddings if not persistent -- will be updated manually
         if not architecture_config["persistent_task_reps"]:
             self.persistent_embeddings = tf.stop_gradient(self.persistent_embeddings)
 
-        def _get_persistent_embeddings(task_indices):
-            persistent_embs = self.persistent_embeddings
+        if self.separate_targ_net:
+            def _get_persistent_embeddings(task_indices, target_net=False):
+                if target_net:
+                    persistent_embs = self.persistent_embeddings_tn
 
-            return tf.nn.embedding_lookup(persistent_embs,
-                                          task_indices)
+                else:
+                    persistent_embs = self.persistent_embeddings
+
+                return tf.nn.embedding_lookup(persistent_embs,
+                                              task_indices)
+
+        else:
+            def _get_persistent_embeddings(task_indices):
+                persistent_embs = self.persistent_embeddings
+
+                return tf.nn.embedding_lookup(persistent_embs,
+                                              task_indices)
 
         self.lookup_cached_emb = _get_persistent_embeddings(
             self.task_index_ph)
+
+        if self.separate_targ_net:
+            self.lookup_cached_emb_tn = _get_persistent_embeddings(
+                self.task_index_ph, target_net=True)
 
         if architecture_config["persistent_task_reps"]:
             def _get_combined_embedding_and_match_loss(guess_embedding, task_index,
@@ -527,6 +590,11 @@ class HoMM_model(object):
              self.base_emb_match_loss) = _get_combined_embedding_and_match_loss(
                 self.base_guess_emb, self.task_index_ph,
                 architecture_config["combined_emb_guess_weight"])
+            if self.separate_targ_net:
+                (self.base_combined_emb_tn,
+                 _) = _get_combined_embedding_and_match_loss(
+                    self.base_guess_emb_tn, self.task_index_ph,
+                    architecture_config["combined_emb_guess_weight"])
 
         meta_input_embeddings = _get_persistent_embeddings(
             self.meta_input_indices_ph)
@@ -554,13 +622,15 @@ class HoMM_model(object):
                 architecture_config["combined_emb_guess_weight"])
         else:
             self.base_combined_emb = self.base_guess_emb
+            if self.separate_targ_net:
+                self.base_combined_emb_tn = self.base_guess_emb_tn
             self.meta_class_combined_emb = self.meta_class_guess_emb
             self.meta_map_combined_emb = self.meta_map_guess_emb
 
 
         ## hyper_network: Z -> (F: Z -> Z)
         self.feed_embedding_ph = tf.placeholder(np.float32,
-                                                [1, num_hidden_hyper])
+                                                [1, z_dim])
 
         z_dim = architecture_config["z_dim"]
         num_hidden_hyper = architecture_config["H_num_hidden"]
@@ -614,15 +684,22 @@ class HoMM_model(object):
 
         self.base_task_params = _hyper_network(self.base_combined_emb,
                                                reuse=False)
+        if self.separate_targ_net:
+            with tf.variable_scope("target_net", reuse=False):
+                self.base_task_params_tn = _hyper_network(self.base_combined_emb_tn,
+                                                       reuse=False)
 
         self.meta_map_task_params = _hyper_network(self.meta_map_combined_emb)
         self.meta_class_task_params = _hyper_network(self.meta_class_combined_emb)
 
         if self.run_config["train_language"]:
             self.lang_task_params = _hyper_network(self.language_function_emb)
-        self.fed_emb_task_params = _hyper_network(self.feed_embedding_ph)
 
+        self.fed_emb_task_params = _hyper_network(self.feed_embedding_ph)
         self.cached_emb_task_params = _hyper_network(self.lookup_cached_emb)
+        if self.separate_targ_net:
+            with tf.variable_scope("target_net", reuse=True):
+                self.cached_emb_task_params_tn = _hyper_network(self.lookup_cached_emb_tn, reuse=True)
 
         ## task network F: Z -> Z
         def _task_network(task_params, processed_input):
@@ -639,6 +716,10 @@ class HoMM_model(object):
         self.base_raw_output = _task_network(self.base_task_params,
                                              self.processed_input)
         self.base_output = output_processor(self.base_raw_output)
+        if self.separate_targ_net:
+            self.base_raw_output_tn = _task_network(self.base_task_params_tn,
+                                                    self.processed_input_tn)
+            self.base_output_tn = output_processor_tn(self.base_raw_output_tn)
 
         self.base_raw_fed_emb_output = _task_network(self.fed_emb_task_params,
                                                      self.processed_input)
@@ -661,6 +742,11 @@ class HoMM_model(object):
             self.cached_emb_task_params, self.processed_input)
         self.base_cached_emb_output = output_processor(
             self.base_cached_emb_raw_output)
+        if self.separate_targ_net:
+            self.base_cached_emb_raw_output_tn = _task_network(
+                self.cached_emb_task_params_tn, self.processed_input_tn)
+            self.base_cached_emb_output_tn = output_processor(
+                self.base_cached_emb_raw_output_tn)
 
         self.meta_cached_emb_raw_output = _task_network(
             self.cached_emb_task_params, meta_input_embeddings)
@@ -763,6 +849,17 @@ class HoMM_model(object):
             self.base_lang_train_op = optimizer.minimize(self.total_base_lang_loss)
             self.meta_map_lang_train_op = optimizer.minimize(self.total_meta_map_lang_loss)
 
+        if self.separate_targ_net:
+            learner_vars = [v for v in tf.trainable_variables() if "target_net" not in v.name]
+            target_vars = [v for v in tf.trainable_variables() if "target_net" in v.name]
+
+            # there may be extra vars in the learner, e.g. because language is in learner but not target
+            matched_learner_vars = [v for v_targ in target_vars for v in learner_vars if v.name == "/".join(v_targ.name.split("/")[1:])]  
+
+            ## copy learner to target
+            self.update_target_network_op = [v_targ.assign(v) for v_targ, v in zip(target_vars, matched_learner_vars)]
+
+
     def _pre_loss_calls(self):
         """Called after generating the outputs, but before generating losses."""
         pass
@@ -777,6 +874,8 @@ class HoMM_model(object):
         self.sess = tf.Session(config=sess_config)
         self.sess.run(tf.global_variables_initializer())
         self.fill_buffers(num_data_points=self.architecture_config["memory_buffer_size"])
+        if self.separate_targ_net:
+            self.sess.run(self.update_target_network_op)
 
         save_config(self.run_config["run_config_filename"], self.run_config) 
         save_config(self.run_config["architecture_config_filename"],
@@ -1168,6 +1267,10 @@ class HoMM_model(object):
                     lang_losses))
                 fout.write(formatted_losses)
 
+    def end_epoch_calls(self, epoch): 
+        """Can be overridden to change things like exploration over learning."""
+        pass
+
     def run_training(self):
         """Train model."""
         train_language = self.run_config["train_language"]
@@ -1247,3 +1350,5 @@ class HoMM_model(object):
 
                 if train_language and language_learning_rate > min_language_learning_rate:
                     language_learning_rate *= language_lr_decay
+
+            self.end_epoch_calls(epoch)

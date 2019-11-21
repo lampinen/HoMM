@@ -7,6 +7,8 @@ default_architecture_config = {
    "outcome_shape": None,  # If not None, allows outcomes != targets, for RL etc.
    "output_masking": False,  # If True, enables output masking, for RL tasks
 
+   "separate_target_network": False,  # construct a separate network for e.g. Q-learning targets
+
    "IO_num_hidden": 128,  # number of hidden units in input/output nets.
 
    "z_dim": 512,  # latent dimensionality
