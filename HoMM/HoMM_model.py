@@ -822,10 +822,13 @@ class HoMM_model(object):
         self.total_meta_map_cached_emb_loss = meta_loss(
             self.meta_cached_emb_raw_output, meta_target_embeddings) 
 
+        self.total_base_train_loss = self.total_base_loss
+        self.total_meta_class_train_loss = self.total_meta_class_loss
+        self.total_meta_map_train_loss = self.total_meta_map_loss
         if self.architecture_config["persistent_task_reps"]: # Add the emb_match losses
-            self.total_base_loss += self.base_emb_match_loss
-            self.total_meta_class_loss += self.meta_class_emb_match_loss
-            self.total_meta_map_loss += self.meta_map_emb_match_loss
+            self.total_base_train_loss += self.base_emb_match_loss
+            self.total_meta_class_train_loss += self.meta_class_emb_match_loss
+            self.total_meta_map_train_loss += self.meta_map_emb_match_loss
 
         if self.run_config["train_language"]:
             self.total_base_lang_loss = base_loss(self.base_lang_output,
@@ -841,9 +844,9 @@ class HoMM_model(object):
         else:
             raise ValueError("Unknown optimizer: %s" % architecture_config["optimizer"])
 
-        self.base_train_op = optimizer.minimize(self.total_base_loss)
-        self.meta_class_train_op = optimizer.minimize(self.total_meta_class_loss)
-        self.meta_map_train_op = optimizer.minimize(self.total_meta_map_loss)
+        self.base_train_op = optimizer.minimize(self.total_base_train_loss)
+        self.meta_class_train_op = optimizer.minimize(self.total_meta_class_train_loss)
+        self.meta_map_train_op = optimizer.minimize(self.total_meta_map_train_loss)
 
         if self.run_config["train_language"]:
             self.base_lang_train_op = optimizer.minimize(self.total_base_lang_loss)
