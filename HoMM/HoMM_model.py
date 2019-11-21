@@ -317,7 +317,6 @@ class HoMM_model(object):
         num_hidden_hyper = architecture_config["H_num_hidden"]
         z_dim = architecture_config["z_dim"]
         internal_nonlinearity = architecture_config["internal_nonlinearity"]
-        output_nonlinearity = architecture_config["output_nonlinearity"]
 
         if input_processor is None:
             input_processor = lambda x: default_input_processor(
