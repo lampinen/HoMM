@@ -120,8 +120,9 @@ def _pad(l, length, pad_token="PAD"):
 def save_config(filename, config):
     with open(filename, "w") as fout:
         fout.write("key, value\n")
-        for key, value in config.items():
-            fout.write(key + ", " + str(value) + "\n")
+        keys = sorted(config.keys())
+        for key in keys:
+            fout.write(key + ", " + str(config[key]) + "\n")
 
 
 class HoMM_model(object):
@@ -936,7 +937,6 @@ class HoMM_model(object):
         """
         input_buff, output_buff = memory_buffer.get_memories()
         return input_buff, output_buff
-
 
     def intify_task(self, task): 
         """Will need to be overridden"""
