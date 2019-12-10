@@ -1021,7 +1021,7 @@ class HoMM_model(object):
 
     def base_eval(self, task, train_or_eval):
         feed_dict = self.build_feed_dict(task, call_type="base_cached_eval")
-        fetches = [self.total_base_loss]
+        fetches = [self.total_base_cached_emb_loss]
         res = self.sess.run(fetches, feed_dict=feed_dict)
         name = str(task) + ":" + train_or_eval
         return [name], res
