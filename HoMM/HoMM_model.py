@@ -354,6 +354,11 @@ class HoMM_model(object):
             if self.separate_targ_net:
                 output_processor_tn = lambda x: default_output_processor(
                     x, target_processor_var_tn)
+        elif self.separate_targ_net:
+            def output_processor_tn(x):
+                with tf.variable_scope("target_net", reuse=False):
+                    return output_processor(x)
+                
 
         if outcome_shape is not None:
             if outcome_processor is None:
