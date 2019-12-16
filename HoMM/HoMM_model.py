@@ -93,6 +93,13 @@ def default_meta_class_processor(targets, meta_class_processor_var):
     return processed_targets
 
 
+def alternative_meta_class_out_processor(meta_class_raw_output, reuse=True):
+    with tf.variable_scope('alternative_meta_class_out_processor', reuse=reuse):
+        meta_class_output_logits = slim.fully_connected(
+            meta_class_raw_output, 1, activation_fn=None) 
+    return meta_class_output_logits
+
+
 def default_output_processor(output_embeddings, target_processor):
     processed_outputs = tf.matmul(output_embeddings, target_processor)
     return processed_outputs 
@@ -347,6 +354,7 @@ class HoMM_model(object):
             if self.separate_targ_net:
                 with tf.variable_scope("target_net", reuse=False):
                     processed_targets_tn = target_processor(self.base_target_ph)
+            meta_class_processor_var = None
 
         if output_processor is None:
             output_processor = lambda x: default_output_processor(
@@ -735,8 +743,13 @@ class HoMM_model(object):
 
         self.meta_class_raw_output = _task_network(self.meta_class_task_params,
                                                    meta_input_embeddings)
-        self.meta_class_output_logits = tf.matmul(
-            self.meta_class_raw_output, meta_class_processor_var)
+        if meta_class_processor_var is not None:
+            self.meta_class_output_logits = tf.matmul(
+                self.meta_class_raw_output, meta_class_processor_var)
+        else:
+            self.meta_class_output_logits = alternative_meta_class_out_processor(
+                self.meta_class_raw_output, reuse=False)
+            
         self.meta_class_output = tf.nn.sigmoid(self.meta_class_output_logits)
 
         self.meta_map_output = _task_network(self.meta_map_task_params,
@@ -757,8 +770,13 @@ class HoMM_model(object):
 
         self.meta_cached_emb_raw_output = _task_network(
             self.cached_emb_task_params, meta_input_embeddings)
-        self.meta_class_cached_emb_output_logits = tf.matmul(
-            self.meta_cached_emb_raw_output, meta_class_processor_var)
+
+        if meta_class_processor_var is not None:
+            self.meta_class_cached_emb_output_logits = tf.matmul(
+                self.meta_cached_emb_raw_output, meta_class_processor_var)
+        else:
+            self.meta_class_cached_emb_output_logits = alternative_meta_class_out_processor(
+                self.meta_cached_emb_raw_output, reuse=True)
 
         if self.run_config["train_language"]:
             self.base_lang_raw_output = _task_network(self.lang_task_params,
