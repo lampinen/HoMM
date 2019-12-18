@@ -154,8 +154,8 @@ class HoMM_model(object):
         self.filename_prefix = "%srun%i_" %(self.run_config["output_dir"],
                                             self.run_config["this_run"])
 
-        print("Starting run %i of %s", % (self.run_config["this_run"],
-                                          self.run_config["output_dir"]))
+        print("Starting run %i of %s" % (self.run_config["this_run"],
+                                         self.run_config["output_dir"]))
 
         # set up filenames
         self.run_config["run_config_filename"] = self.filename_prefix + "run_config.csv"
