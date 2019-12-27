@@ -30,6 +30,7 @@ default_architecture_config = {
                                      # will be normalized to unit length --
                                      # Jeff Clune says this helps in this kind
                                      # of context
+   "F_wn_skip_last": False,  # if True, skip normalizing output weights of F 
 
    "internal_nonlinearity": tf.nn.leaky_relu,  # nonlinearity for hidden layers
                                                # -- note that output to Z is

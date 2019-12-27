@@ -701,7 +701,10 @@ class HoMM_model(object):
                     def normalize_weights(x):
                         return x / (tf.sqrt(tf.reduce_sum(
                             tf.square(x), axis=0, keepdims=True)) + 1e-6) 
-                    hidden_weights = [normalize_weights(x) for x in hidden_weights]
+                    if self.architecture_config["F_wn_skip_last"]:
+                        hidden_weights = [normalize_weights(x) for x in hidden_weights[:-1]] + [hidden_weights[-1]]
+                    else:
+                        hidden_weights = [normalize_weights(x) for x in hidden_weights]
                 return hidden_weights, hidden_biases
 
         self.base_task_params = _hyper_network(self.base_combined_emb,
