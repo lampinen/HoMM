@@ -28,9 +28,12 @@ default_architecture_config = {
 
    "F_weight_normalization": False,  # if True, weight vectors in task network
                                      # will be normalized to unit length --
-                                     # Jeff Clune says this helps in this kind
-                                     # of context
+                                     # Jeff Clune says this plus predicting
+                                     # magnitude separately helps in this kind
+                                     # of context.
    "F_wn_skip_last": False,  # if True, skip normalizing output weights of F 
+   "F_wn_scalar_magnitude": True,  # if True, predict magnitude, rather than
+                                   # forcing unit vectors when wn is on.
 
    "internal_nonlinearity": tf.nn.leaky_relu,  # nonlinearity for hidden layers
                                                # -- note that output to Z is
