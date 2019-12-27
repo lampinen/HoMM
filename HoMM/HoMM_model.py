@@ -697,6 +697,11 @@ class HoMM_model(object):
                 bfinal = tf.squeeze(bfinal, axis=0)
                 hidden_weights.append(Wfinal)
                 hidden_biases.append(bfinal)
+                if self.architecture_config["F_weight_normalization"]:
+                    def normalize_weights(x):
+                        return x / (tf.sqrt(tf.reduce_sum(
+                            tf.square(x), axis=0, keepdims=True)) + 1e-6) 
+                    hidden_weights = [normalize_weights(x) for x in hidden_weights]
                 return hidden_weights, hidden_biases
 
         self.base_task_params = _hyper_network(self.base_combined_emb,

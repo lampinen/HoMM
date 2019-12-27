@@ -26,6 +26,11 @@ default_architecture_config = {
    "F_num_hidden_layers": 3,  # task network num hidden layers
    "F_num_hidden": 64,  # task network hidden units
 
+   "F_weight_normalization": False,  # if True, weight vectors in task network
+                                     # will be normalized to unit length --
+                                     # Jeff Clune says this helps in this kind
+                                     # of context
+
    "internal_nonlinearity": tf.nn.leaky_relu,  # nonlinearity for hidden layers
                                                # -- note that output to Z is
                                                # linear by default
