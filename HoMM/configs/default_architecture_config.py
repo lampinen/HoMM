@@ -31,9 +31,12 @@ default_architecture_config = {
                                      # Jeff Clune says this plus predicting
                                      # magnitude separately helps in this kind
                                      # of context.
-   "F_wn_skip_last": False,  # if True, skip normalizing output weights of F 
-   "F_wn_scalar_magnitude": True,  # if True, predict magnitude, rather than
-                                   # forcing unit vectors when wn is on.
+   "F_wn_strategy": "standard",  # one of "standard", "unit_until_last", 
+                                 # "all_unit", which respectively fit scalar
+                                 # weight magnitudes for all, only last layer,
+                                 # and none of the task network weights. 
+                                 # Use "standard" for the basic weight-norm
+                                 # approach.
 
    "internal_nonlinearity": tf.nn.leaky_relu,  # nonlinearity for hidden layers
                                                # -- note that output to Z is

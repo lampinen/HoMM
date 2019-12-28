@@ -701,19 +701,31 @@ class HoMM_model(object):
                     def normalize_weights(x):
                         return x / (tf.sqrt(tf.reduce_sum(
                             tf.square(x), axis=0, keepdims=True)) + 1e-6) 
-                    if self.architecture_config["F_wn_skip_last"]:
-                        hidden_weights = [normalize_weights(x) for x in hidden_weights[:-1]] + [hidden_weights[-1]]
-                    else:
-                        hidden_weights = [normalize_weights(x) for x in hidden_weights]
+                    hidden_weights = [normalize_weights(x) for x in hidden_weights]
 
-                    if self.architecture_config["F_wn_scalar_magnitude"]:
+
+                    F_wn_strategy = self.architecture_config["F_wn_strategy"]
+                    if F_wn_strategy == "standard":  
+                        # fit scalar magnitudes for each vector, as expressive
+                        # as standard, but may be easier to optimize. The
+                        # original weight normalization idea
                         task_weight_norms = tf.nn.relu(1. + slim.fully_connected(
                             hyper_hidden, 
                             num_task_hidden_layers*num_hidden_F + z_dim,
                             activation_fn=None))
                         endpoints = [i * num_hidden_F for i in range(len(hidden_weights))] + [len(hidden_weights) * num_hidden_F + z_dim]
                         hidden_weights = [tf.multiply(x, task_weight_norms[0, tf.newaxis, endpoints[i]:endpoints[i + 1]]) for (i, x) in enumerate(hidden_weights)]
+                    elif F_wn_strategy == "unit_until_last":
+                        # leaves lengths as units except last layer 
+                        task_weight_norms = tf.nn.relu(1. + slim.fully_connected(
+                            hyper_hidden, 
+                            z_dim,
+                            activation_fn=None))
+                        hidden_weights[-1] = tf.multiply(hidden_weights[-1], task_weight_norms[0, tf.newaxis, :])
 
+                    # all_unit leaves all weight vecs unit length
+                    elif F_wn_strategy != "all_unit":   
+                        raise ValueError("Unrecognized F_wn_strategy: %s" % F_wn_strategy) 
                         
                 return hidden_weights, hidden_biases
 
