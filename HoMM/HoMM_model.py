@@ -452,23 +452,19 @@ class HoMM_model(object):
 #            with tf.variable_scope('meta/bi_combination', reuse=reuse):
 #                c_input = tf.concat([inputs_1,
 #                                     inputs_2], axis=-1)
-#                c_input = tf.nn.dropout(c_input, self.keep_prob_ph)
 #
 #                ch_1 = slim.fully_connected(c_input, num_hidden_hyper,
 #                                            activation_fn=internal_nonlinearity)
-#                ch_1 = tf.nn.dropout(ch_1, self.keep_prob_ph)
 #                ch_2 = slim.fully_connected(ch_1, num_hidden_hyper,
 #                                            activation_fn=internal_nonlinearity)
-#                ch_2 = tf.nn.dropout(ch_2, self.keep_prob_ph)
 #                ch_3 = slim.fully_connected(ch_2, num_hidden_hyper,
 #                                            activation_fn=internal_nonlinearity)
-#                combined = tf.nn.dropout(ch_3, self.keep_prob_ph)
 #                # also include direct inputs averaged
 #                self.combination_weight = tf.get_variable('combination_weight',
 #                                                          shape=[],
 #                                                          initializer=tf.constant_initializer(0.))
 #                c_w = tf.nn.sigmoid(self.combination_weight) 
-#                combined = (c_w) * combined + (1.- c_w) * 0.5 * (inputs_1 + inputs_2) 
+#                combined = (c_w) * ch_3 + (1.- c_w) * 0.5 * (inputs_1 + inputs_2) 
 #                return combined 
 #
 #        self.combined_meta_inputs = _combine_inputs(self.meta_input_ph,
@@ -644,10 +640,22 @@ class HoMM_model(object):
             self.meta_class_combined_emb = self.meta_class_guess_emb
             self.meta_map_combined_emb = self.meta_map_guess_emb
 
+        if self.tkp < 1.:  # dropout on task reps
+             self.base_combined_emb = tf.nn.dropout(self.base_combined_emb, self.keep_prob_ph)
+             self.meta_class_combined_emb = tf.nn.dropout(self.meta_class_combined_emb, self.keep_prob_ph)
+             self.meta_map_combined_emb = tf.nn.dropout(self.meta_map_combined_emb, self.keep_prob_ph)
+             self.lookup_cached_emb = tf.nn.dropout(self.lookup_cached_emb, self.keep_prob_ph)
+             if self.run_config["train_language"]:
+                 self.language_function_emb = tf.nn.dropout(self.language_function_emb, self.keep_prob_ph)
 
         ## hyper_network: Z -> (F: Z -> Z)
         self.feed_embedding_ph = tf.placeholder(np.float32,
                                                 [1, z_dim])
+
+        if self.tkp < 1.:  # dropout on task reps
+            fed_embedding = tf.nn.dropout(self.feed_embedding_ph, self.keep_prob_ph) 
+        else:
+            fed_embedding = self.feed_embedding_ph
 
         z_dim = architecture_config["z_dim"]
         num_hidden_hyper = architecture_config["H_num_hidden"]
@@ -742,7 +750,7 @@ class HoMM_model(object):
         if self.run_config["train_language"]:
             self.lang_task_params = _hyper_network(self.language_function_emb)
 
-        self.fed_emb_task_params = _hyper_network(self.feed_embedding_ph)
+        self.fed_emb_task_params = _hyper_network(fed_embedding)
         self.cached_emb_task_params = _hyper_network(self.lookup_cached_emb)
         if self.separate_targ_net:
             with tf.variable_scope("target_net", reuse=True):

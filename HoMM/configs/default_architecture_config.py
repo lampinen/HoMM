@@ -46,9 +46,9 @@ default_architecture_config = {
                                    # -- not included in original paper, but
                                    # can be useful for learning complex tasks
 
-   "train_drop_prob": 0.0,  # drop prob for M/H/etc
+   "train_drop_prob": 0.0,  # drop prob for task representations 
 
-   "lang_drop_prob": 0.0,  # drop prob for language processing
+   "lang_drop_prob": 0.0,  # drop prob for language processing network
    "num_lstm_layers": 2,  # for language processing
    "max_sentence_len": 20,  # for language
 
