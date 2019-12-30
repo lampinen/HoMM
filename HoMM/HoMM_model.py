@@ -142,8 +142,9 @@ class HoMM_model(object):
         """Set up data structures, build the network.
         
         The child classes should call this with a super call, overriding the
-        _pre_ and _post_build_calls methods as necessary. In particular, the
-        _pre_build_calls function should be used to add any
+        _pre_build_calls, _pre_loss_calls, etc. methods as necessary. In 
+        particular, the _pre_build_calls function should be used to construct
+        the basic tasks. See examples for demonstrations.
         """
         if architecture_config is None:
             architecture_config = default_architecture_config.default_architecture_config 
@@ -446,38 +447,10 @@ class HoMM_model(object):
                     self.base_guess_emb_tn = _meta_network(self.processed_input_tn,
                                                            processed_targets_tn,
                                                            reuse=False)
-        # TODO: Use it or lose it
-        # for combination tasks 
-#        def _combine_inputs(inputs_1, inputs_2, reuse=True):
-#            with tf.variable_scope('meta/bi_combination', reuse=reuse):
-#                c_input = tf.concat([inputs_1,
-#                                     inputs_2], axis=-1)
-#
-#                ch_1 = slim.fully_connected(c_input, num_hidden_hyper,
-#                                            activation_fn=internal_nonlinearity)
-#                ch_2 = slim.fully_connected(ch_1, num_hidden_hyper,
-#                                            activation_fn=internal_nonlinearity)
-#                ch_3 = slim.fully_connected(ch_2, num_hidden_hyper,
-#                                            activation_fn=internal_nonlinearity)
-#                # also include direct inputs averaged
-#                self.combination_weight = tf.get_variable('combination_weight',
-#                                                          shape=[],
-#                                                          initializer=tf.constant_initializer(0.))
-#                c_w = tf.nn.sigmoid(self.combination_weight) 
-#                combined = (c_w) * ch_3 + (1.- c_w) * 0.5 * (inputs_1 + inputs_2) 
-#                return combined 
-#
-#        self.combined_meta_inputs = _combine_inputs(self.meta_input_ph,
-#                                                    self.meta_input_2_ph,
-#                                                    reuse=False)
-#
-#        self.guess_meta_bf_function_emb = _meta_network(
-#            self.combined_meta_inputs, self.meta_target_ph)
-
 
         ## language processing: lang -> Z
         if self.run_config["train_language"]:
-            warnings.warn("Language has not been tested in this version of the code, some debugging may be needed")
+            raise NotImplementedError("Language has not been tested in this version of the code, some debugging may be needed")
             num_hidden_language = architecture_config["num_hidden_language"]
             num_lstm_layers = architecture_config["num_lstm_layers"]
 
