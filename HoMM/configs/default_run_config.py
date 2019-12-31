@@ -1,6 +1,8 @@
 default_run_config = {
-    "train_language": False,  # whether to train language
+    "train_base": True,  # whether to train base meta-learning 
     "train_meta": True,  # whether to train meta class/map tasks, or just base
+    "train_language_base": False,  # whether to train language -> base tasks 
+    "train_language_meta": False,  # whether to train language -> meta tasks
     
     "num_epochs": 10000,  # number of training epochs
     "refresh_mem_buffs_every": 50, # how many epochs between updates to buffers

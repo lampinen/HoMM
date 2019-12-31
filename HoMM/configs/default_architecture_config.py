@@ -50,7 +50,8 @@ default_architecture_config = {
 
    "lang_drop_prob": 0.0,  # drop prob for language processing network
    "num_lstm_layers": 2,  # for language processing
-   "max_sentence_len": 20,  # for language
+   "lang_num_hidden": 512,  # num hidden units in LSTM
+   "max_sentence_len": 20,  
 
    "optimizer": "Adam",  # Adam or RMSProp are supported options
    "memory_buffer_size": 1024,  # how many data points to remember (per task)

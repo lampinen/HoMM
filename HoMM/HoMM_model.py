@@ -151,6 +151,7 @@ class HoMM_model(object):
         else:
             architecture_config = architecture_config
         self.run_config = deepcopy(run_config)
+        self.run_config["train_language"] = self.run_config["train_language_base"] or self.run_config["train_language_meta"] 
         self.architecture_config = deepcopy(architecture_config)
         self.filename_prefix = "%srun%i_" %(self.run_config["output_dir"],
                                             self.run_config["this_run"])
@@ -284,7 +285,27 @@ class HoMM_model(object):
                         self.meta_datasets[mt]["eval"]["out"][num_train + i, 0] = res
                     else:
                         res_index = self.task_indices[res]
-                        self.meta_datasets[mt]["eval"]["out"][num_train + i] = res_index
+                        self.meta_datasets[mt]["eval"]["out"][num_train + i] = res_index  
+
+        # language structures
+        if self.run_config["train_language"]:
+            self.task_name_to_lang_input = {}
+            self.vocab = self.run_config["vocab"]
+            self.vocab_size = len(self.vocab)
+            self.vocab_dict = {t: i for (i, t) in enumerate(self.vocab)} 
+
+
+        if self.run_config["train_language_base"]:
+            for task in self.base_train_tasks + self.base_eval_tasks:
+                task_name, _, _ = self.base_task_lookup(task)
+                self.task_name_to_lang_input[task_name] = np.array(
+                    [self.intify_task(task_name)], dtype=np.int32)
+
+        if self.run_config["train_language_meta"]:
+            for mt in all_meta_tasks:
+                task_name, _, _ = self.meta_task_lookup(mt)
+                self.task_name_to_lang_input[task_name] = np.array(
+                    [self.intify_task(task_name)], dtype=np.int32)
 
     def _post_build_calls(self):
         """Can be overridden to do something after building, before session."""
@@ -299,10 +320,6 @@ class HoMM_model(object):
         self.meta_batch_size = architecture_config["meta_batch_size"]
         self.tkp = 1. - architecture_config["train_drop_prob"] # drop prob -> keep prob
         self.separate_targ_net = architecture_config["separate_target_network"]
-
-        if self.run_config["train_language"]:
-            self.vocab = architecture_config["vocab"]
-            self.vocab_size = len(self.vocab)
 
         # network
         var_scale_init = tf.contrib.layers.variance_scaling_initializer(factor=1., mode='FAN_AVG')
@@ -450,44 +467,46 @@ class HoMM_model(object):
 
         ## language processing: lang -> Z
         if self.run_config["train_language"]:
-            raise NotImplementedError("Language has not been tested in this version of the code, some debugging may be needed")
-            num_hidden_language = architecture_config["num_hidden_language"]
+            if self.run_config["train_language_meta"]:
+                raise NotImplementedError("Language for meta tasks has not been tested in this version of the code, some debugging may be needed")
+            lang_num_hidden = architecture_config["lang_num_hidden"]
             num_lstm_layers = architecture_config["num_lstm_layers"]
+            max_sentence_len = architecture_config["max_sentence_len"]
 
-            self.lang_keep_ph = lang_keep_ph = tf.placeholder(tf.float32)
+            self.lang_keep_prob_ph = lang_keep_prob_ph = tf.placeholder(tf.float32)
             self.lang_keep_prob = 1. - architecture_config["lang_drop_prob"]
             self.language_input_ph = tf.placeholder(
-                tf.int32, shape=[1, self.max_sentence_len])
+                tf.int32, shape=[1, max_sentence_len])
 
             def _language_network(language_input, reuse=False):
                 """Maps from language to a function embedding"""
                 with tf.variable_scope("word_embeddings", reuse=reuse):
                     self.word_embeddings = tf.get_variable(
-                        "embeddings", shape=[self.vocab_size, num_hidden_language])
+                        "embeddings", shape=[self.vocab_size, lang_num_hidden])
 
                 embedded_language = tf.nn.embedding_lookup(self.word_embeddings,
                                                            language_input)
                 with tf.variable_scope("language_processing"):
                     cells = [tf.nn.rnn_cell.LSTMCell(
-                        num_hidden_language) for _ in range(num_lstm_layers)]
+                        lang_num_hidden) for _ in range(num_lstm_layers)]
                     stacked_cell = tf.nn.rnn_cell.MultiRNNCell(cells)
 
                     state = stacked_cell.zero_state(1, dtype=tf.float32)
 
-                    for i in range(self.max_sentence_len):
+                    for i in range(max_sentence_len):
                         this_input = embedded_language[:, i, :]
                         this_input = tf.nn.dropout(this_input,
-                                                   lang_keep_ph)
+                                                   lang_keep_prob_ph)
                         cell_output, state = stacked_cell(this_input, state)
 
                     cell_output = tf.nn.dropout(cell_output,
-                                               lang_keep_ph)
+                                                lang_keep_prob_ph)
                     language_hidden = slim.fully_connected(
-                        cell_output, num_hidden_language,
+                        cell_output, lang_num_hidden,
                         activation_fn=internal_nonlinearity)
 
                     language_hidden = tf.nn.dropout(language_hidden,
-                                               lang_keep_ph)
+                                               lang_keep_prob_ph)
 
                     func_embeddings = slim.fully_connected(language_hidden,
                                                            num_hidden_hyper,
@@ -722,6 +741,9 @@ class HoMM_model(object):
 
         if self.run_config["train_language"]:
             self.lang_task_params = _hyper_network(self.language_function_emb)
+            if self.separate_targ_net:
+                with tf.variable_scope("target_net", reuse=False):
+                    self.lang_task_params_tn = _hyper_network(self.language_function_emb_tn)
 
         self.fed_emb_task_params = _hyper_network(fed_embedding)
         self.cached_emb_task_params = _hyper_network(self.lookup_cached_emb)
@@ -778,7 +800,7 @@ class HoMM_model(object):
         if self.separate_targ_net:
             self.base_cached_emb_raw_output_tn = _task_network(
                 self.cached_emb_task_params_tn, self.processed_input_tn)
-            self.base_cached_emb_output_tn = output_processor(
+            self.base_cached_emb_output_tn = output_processor_tn(
                 self.base_cached_emb_raw_output_tn)
 
         self.meta_cached_emb_raw_output = _task_network(
@@ -791,11 +813,17 @@ class HoMM_model(object):
             self.meta_class_cached_emb_output_logits = alternative_meta_class_out_processor(
                 self.meta_cached_emb_raw_output, reuse=True)
 
-        if self.run_config["train_language"]:
+        if self.run_config["train_language_base"]:
             self.base_lang_raw_output = _task_network(self.lang_task_params,
-                                                     processed_input)
+                                                      self.processed_input)
             self.base_lang_output = output_processor(self.base_lang_raw_output)
 
+            if self.separate_targ_net:
+                self.base_lang_raw_output_tn = _task_network(self.lang_task_params_tn,
+                                                             self.processed_input_tn)
+                self.base_lang_output_tn = output_processor_tn(self.base_lang_raw_output_tn)
+
+        if self.run_config["train_language_meta"]:
             self.meta_map_lang_output = _task_network(self.lang_task_params,
                                                       meta_input_embeddings) 
 
@@ -816,6 +844,11 @@ class HoMM_model(object):
             self.base_cached_emb_unmasked_output = self.base_cached_emb_output
             self.base_cached_emb_output = tf.boolean_mask(self.base_cached_emb_unmasked_output,
                                                           self.base_target_mask_ph)
+
+            if self.run_config["train_language_base"]:
+                self.base_lang_unmasked_output = self.base_lang_output
+                self.base_lang_output = tf.boolean_mask(self.base_lang_unmasked_output,
+                                                   self.base_target_mask_ph)
 
             self.base_unmasked_targets = self.base_target_ph
             self.base_targets = tf.boolean_mask(self.base_unmasked_targets,
@@ -868,10 +901,10 @@ class HoMM_model(object):
             self.total_meta_class_train_loss += self.meta_class_emb_match_loss
             self.total_meta_map_train_loss += self.meta_map_emb_match_loss
 
-        if self.run_config["train_language"]:
+        if self.run_config["train_language_base"]:
             self.total_base_lang_loss = base_loss(self.base_lang_output,
                                                   self.base_targets) 
-
+        if self.run_config["train_language_meta"]:
             self.total_meta_map_lang_loss = meta_loss(self.meta_map_lang_output,
                                                       meta_target_embeddings) 
 
@@ -886,8 +919,9 @@ class HoMM_model(object):
         self.meta_class_train_op = optimizer.minimize(self.total_meta_class_train_loss)
         self.meta_map_train_op = optimizer.minimize(self.total_meta_map_train_loss)
 
-        if self.run_config["train_language"]:
+        if self.run_config["train_language_base"]:
             self.base_lang_train_op = optimizer.minimize(self.total_base_lang_loss)
+        if self.run_config["train_language_meta"]:
             self.meta_map_lang_train_op = optimizer.minimize(self.total_meta_map_lang_loss)
 
         if self.separate_targ_net:
@@ -1032,7 +1066,7 @@ class HoMM_model(object):
                 fed_embedding = np.expand_dims(fed_embedding, axis=0)
             feed_dict[self.feed_embedding_ph] = fed_embedding
         elif call_type == "lang":
-            feed_dict[self.language_input_ph] = self.intify_task(task_name)
+            feed_dict[self.language_input_ph] = self.task_name_to_lang_input[task_name]
         if call_type == "cached" or self.architecture_config["persistent_task_reps"]:
             feed_dict[self.task_index_ph] = [task_index]
 
@@ -1077,12 +1111,12 @@ class HoMM_model(object):
 
         return names, losses
         
-    def base_language_eval(self, task):
+    def base_language_eval(self, task, train_or_eval):
         feed_dict = self.build_feed_dict(task, call_type="base_lang_eval")
         fetches = [self.total_base_lang_loss]
         res = self.sess.run(fetches, feed_dict=feed_dict)
         name = str(task) + ":" + train_or_eval
-        return res
+        return [name], res
 
     def run_base_language_eval(self):
         losses = [] 
@@ -1198,6 +1232,46 @@ class HoMM_model(object):
 
         return names, losses 
 
+    def meta_true_language_eval_step(self, meta_mapping, meta_mapping_train_or_eval):
+        meta_dataset = self.meta_datasets[meta_mapping]["eval"]
+
+        feed_dict = self.build_feed_dict(meta_mapping,
+                                         call_type="metamap_lang_eval")
+        result_embeddings = self.sess.run(self.meta_map_output,
+                                          feed_dict=feed_dict) 
+
+        names = []
+        losses = []
+        i = 0
+
+        for train_or_eval in ["train", "eval"]:
+            for (task, other) in self.meta_pairings[meta_mapping][train_or_eval]:
+                mapped_embedding = result_embeddings[i, :]
+
+                names.append(
+                    meta_mapping + ":metamapping_is_" + meta_mapping_train_or_eval + ":example_is_" + train_or_eval + ":" + task + "->" + other)
+                this_loss = self.base_embedding_eval(embedding=mapped_embedding,
+                                                     task=other)[0]
+                losses.append(this_loss)
+                i = i + 1
+        return names, losses
+    
+    def run_meta_true_language_eval(self):
+        """Evaluates true meta loss, i.e. the accuracy of the model produced
+           by the embedding output by the meta task, using language as a cue"""
+        names = []
+        losses = []
+        for these_meta_mappings, train_or_eval in zip([self.meta_map_train_tasks,
+                                                       self.meta_map_eval_tasks],
+                                                      ["train", "eval"]):
+            for meta_mapping in these_meta_mappings:
+                these_names, these_losses = self.meta_true_language_eval_step(
+                    meta_mapping, train_or_eval) 
+                names += these_names
+                losses += these_losses
+
+        return names, losses 
+
     def meta_class_train_step(self, meta_task, meta_lr):
         feed_dict = self.build_feed_dict(meta_task, lr=meta_lr, call_type="metaclass_standard_train")
         self.sess.run(self.meta_class_train_op, feed_dict=feed_dict)
@@ -1258,45 +1332,44 @@ class HoMM_model(object):
 
     def run_eval(self, epoch, print_losses=True):
         train_meta = self.run_config["train_meta"]
+        train_base = self.run_config["train_base"]
+        epoch_s = "%i, " % epoch
 
-        base_names, base_losses = self.run_base_eval()
+        if train_base:
+            base_names, base_losses = self.run_base_eval()
+            if epoch == 0:
+                # set up format string
+                self.loss_format = ", ".join(["%f" for _ in base_names + meta_names]) + "\n"
+
+                # write headers and overwrite existing file 
+                with open(self.run_config["loss_filename"], "w") as fout:
+                    fout.write("epoch, " + ", ".join(base_names + meta_names) + "\n")
+            with open(self.run_config["loss_filename"], "a") as fout:
+                formatted_losses = epoch_s + (self.loss_format % tuple(
+                    base_losses + meta_losses))
+                fout.write(formatted_losses)
+
+            if print_losses:
+                print(formatted_losses)
         
         if train_meta:
             meta_names, meta_losses = self.run_meta_loss_eval()
             meta_true_names, meta_true_losses = self.run_meta_true_eval()
-        else:
-            meta_names, meta_losses = [], []
 
-        if epoch == 0:
-            # set up format string
-            self.loss_format = ", ".join(["%f" for _ in base_names + meta_names]) + "\n"
-
-            # write headers and overwrite existing file 
-            with open(self.run_config["loss_filename"], "w") as fout:
-                fout.write("epoch, " + ", ".join(base_names + meta_names) + "\n")
-
-            if train_meta:
+            if epoch == 0:
                 self.meta_true_loss_format = ", ".join(["%f" for _ in meta_true_names]) + "\n"
                 with open(self.run_config["meta_filename"], "w") as fout:
                     fout.write("epoch, " + ", ".join(meta_true_names) + "\n")
 
-        epoch_s = "%i, " % epoch
-        with open(self.run_config["loss_filename"], "a") as fout:
-            formatted_losses = epoch_s + (self.loss_format % tuple(
-                base_losses + meta_losses))
-            fout.write(formatted_losses)
 
-        if print_losses:
-            print(formatted_losses)
-
-        if train_meta:
             with open(self.run_config["meta_filename"], "a") as fout:
                 formatted_losses = epoch_s + (self.meta_true_loss_format % tuple(
                     meta_true_losses))
                 fout.write(formatted_losses)
 
-        if self.run_config["train_language"]:
-            lang_names, lang_losses = self.run_lang_eval()
+        # language evaluation
+        if self.run_config["train_language_base"]:
+            lang_names, lang_losses = self.run_base_language_eval()
             if epoch == 0:
                 self.lang_loss_format = ", ".join(["%f" for _ in lang_names]) + "\n"
                 with open(self.run_config["lang_filename"], "w") as fout:
@@ -1307,13 +1380,30 @@ class HoMM_model(object):
                     lang_losses))
                 fout.write(formatted_losses)
 
+            if print_losses and not train_base:
+                print(formatted_losses)
+
+        if self.run_config["train_language_meta"]:
+            lang_meta_names, lang_meta_losses = self.run_meta_true_language_eval()
+            if epoch == 0:
+                self.lang_meta_loss_format = ", ".join(["%f" for _ in lang_names]) + "\n"
+                with open(self.run_config["lang_meta_filename"], "w") as fout:
+                    fout.write("epoch, " + ", ".join(lang_meta_names) + "\n")
+
+            with open(self.run_config["lang_meta_filename"], "a") as fout:
+                formatted_losses = epoch_s + (self.lang_meta_loss_format % tuple(
+                    lang_meta_losses))
+                fout.write(formatted_losses)
+
     def end_epoch_calls(self, epoch): 
         """Can be overridden to change things like exploration over learning."""
         pass
 
     def run_training(self):
         """Train model."""
-        train_language = self.run_config["train_language"]
+        train_language_base = self.run_config["train_language_base"]
+        train_language_meta = self.run_config["train_language_meta"]
+        train_base = self.run_config["train_base"]
         train_meta = self.run_config["train_meta"]
 
         eval_every = self.run_config["eval_every"]
@@ -1331,7 +1421,7 @@ class HoMM_model(object):
         min_learning_rate = self.run_config["min_learning_rate"]
         min_meta_learning_rate = self.run_config["min_meta_learning_rate"]
 
-        if train_language:
+        if train_language_base or train_language_meta:
             language_lr_decay = self.run_config["language_lr_decay"]
             min_language_learning_rate = self.run_config["min_language_learning_rate"]
 
@@ -1342,7 +1432,7 @@ class HoMM_model(object):
 
         self.run_eval(epoch=0)
 
-        if train_meta:
+        if train_meta or train_language_meta:
             tasks = self.base_train_tasks + self.meta_class_train_tasks + self.meta_map_train_tasks
             task_types = ["base"] * len(self.base_train_tasks) + ["meta_class"] * len(self.meta_class_train_tasks) + ["meta_map"] * len(self.meta_map_train_tasks)
         else:
@@ -1359,22 +1449,26 @@ class HoMM_model(object):
                 task_type = task_types[task_i]
 
                 if task_type == "base":
-                    self.base_train_step(task, learning_rate)
-                    if train_language:
-                        self.base_lang_train_step(task,
-                                                  language_learning_rate)
+                    if train_base:
+                        self.base_train_step(task, learning_rate)
+                    if train_language_base:
+                        self.base_language_train_step(task,
+                                                      language_learning_rate)
 
                 elif task_type == "meta_class":
-                    self.meta_class_train_step(task, meta_learning_rate)
-                    if train_language:
-                        self.meta_class_lang_train_step(task, language_learning_rate)
+                    if train_meta:
+                        self.meta_class_train_step(task, meta_learning_rate)
+                    if train_language_meta:
+                        self.meta_class_language_train_step(task, language_learning_rate)
                 else: 
-                    self.meta_map_train_step(task, meta_learning_rate)
-                    if train_language:
-                        self.meta_map_lang_train_step(task, language_learning_rate)
+                    if train_meta:
+                        self.meta_map_train_step(task, meta_learning_rate)
+                    if train_language_meta:
+                        self.meta_map_language_train_step(task, language_learning_rate)
 
             if not(self.architecture_config["persistent_task_reps"]):
-                self.update_base_task_embeddings()  # make sure we're up to date
+                if train_base:
+                    self.update_base_task_embeddings()  # make sure we're up to date
                 if train_meta:
                     self.update_meta_task_embeddings()
 
