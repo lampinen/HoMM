@@ -1482,7 +1482,7 @@ class HoMM_model(object):
                 if meta_learning_rate > min_meta_learning_rate:
                     meta_learning_rate *= meta_lr_decay
 
-                if train_language and language_learning_rate > min_language_learning_rate:
+                if (train_language_base or train_language_meta) and language_learning_rate > min_language_learning_rate:
                     language_learning_rate *= language_lr_decay
 
             self.end_epoch_calls(epoch)
