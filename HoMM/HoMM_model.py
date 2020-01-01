@@ -666,37 +666,51 @@ class HoMM_model(object):
                     hyper_hidden = slim.fully_connected(hyper_hidden, num_hidden_hyper,
                                                         activation_fn=internal_nonlinearity)
 
-                hidden_weights = []
-                hidden_biases = []
+                if num_task_hidden_layers == 0:  # linear task network:
+                    task_weights = slim.fully_connected(hyper_hidden, z_dim * z_dim,
+                                                        activation_fn=None,
+                                                        weights_initializer=task_weight_gen_init)
 
-                task_weights = slim.fully_connected(hyper_hidden, num_hidden_F*(z_dim +(num_task_hidden_layers-1)*num_hidden_F + z_dim),
-                                                    activation_fn=None,
-                                                    weights_initializer=task_weight_gen_init)
+                    task_weights = tf.reshape(task_weights, [z_dim, z_dim])
+                    task_biases = slim.fully_connected(hyper_hidden, z_dim,
+                                                       activation_fn=None)
+                    task_biases = tf.squeeze(task_biases, axis=0)
+                    hidden_weights = [task_weights]
+                    hidden_biases = [task_biases]
 
-                task_weights = tf.reshape(task_weights, [-1, num_hidden_F, (z_dim + (num_task_hidden_layers-1)*num_hidden_F + z_dim)])
-                task_biases = slim.fully_connected(hyper_hidden, num_task_hidden_layers * num_hidden_F + z_dim,
-                                                   activation_fn=None)
+                else:
+                    hidden_weights = []
+                    hidden_biases = []
 
-                Wi = tf.transpose(task_weights[:, :, :z_dim], perm=[0, 2, 1])
-                bi = task_biases[:, :num_hidden_F]
-                hidden_weights.append(Wi)
-                hidden_biases.append(bi)
-                for i in range(1, num_task_hidden_layers):
-                    Wi = tf.transpose(task_weights[:, :, z_dim+(i-1)*num_hidden_F:z_dim+i*num_hidden_F], perm=[0, 2, 1])
-                    bi = task_biases[:, num_hidden_F*i:num_hidden_F*(i+1)]
+                    task_weights = slim.fully_connected(hyper_hidden, num_hidden_F*(z_dim +(num_task_hidden_layers-1)*num_hidden_F + z_dim),
+                                                        activation_fn=None,
+                                                        weights_initializer=task_weight_gen_init)
+
+                    task_weights = tf.reshape(task_weights, [-1, num_hidden_F, (z_dim + (num_task_hidden_layers-1)*num_hidden_F + z_dim)])
+                    task_biases = slim.fully_connected(hyper_hidden, num_task_hidden_layers * num_hidden_F + z_dim,
+                                                       activation_fn=None)
+
+                    Wi = tf.transpose(task_weights[:, :, :z_dim], perm=[0, 2, 1])
+                    bi = task_biases[:, :num_hidden_F]
                     hidden_weights.append(Wi)
                     hidden_biases.append(bi)
-                Wfinal = task_weights[:, :, -z_dim:]
-                bfinal = task_biases[:, -z_dim:]
+                    for i in range(1, num_task_hidden_layers):
+                        Wi = tf.transpose(task_weights[:, :, z_dim+(i-1)*num_hidden_F:z_dim+i*num_hidden_F], perm=[0, 2, 1])
+                        bi = task_biases[:, num_hidden_F*i:num_hidden_F*(i+1)]
+                        hidden_weights.append(Wi)
+                        hidden_biases.append(bi)
+                    Wfinal = task_weights[:, :, -z_dim:]
+                    bfinal = task_biases[:, -z_dim:]
 
-                for i in range(num_task_hidden_layers):
-                    hidden_weights[i] = tf.squeeze(hidden_weights[i], axis=0)
-                    hidden_biases[i] = tf.squeeze(hidden_biases[i], axis=0)
+                    for i in range(num_task_hidden_layers):
+                        hidden_weights[i] = tf.squeeze(hidden_weights[i], axis=0)
+                        hidden_biases[i] = tf.squeeze(hidden_biases[i], axis=0)
 
-                Wfinal = tf.squeeze(Wfinal, axis=0)
-                bfinal = tf.squeeze(bfinal, axis=0)
-                hidden_weights.append(Wfinal)
-                hidden_biases.append(bfinal)
+                    Wfinal = tf.squeeze(Wfinal, axis=0)
+                    bfinal = tf.squeeze(bfinal, axis=0)
+                    hidden_weights.append(Wfinal)
+                    hidden_biases.append(bfinal)
+
                 if self.architecture_config["F_weight_normalization"]:
                     def normalize_weights(x):
                         return x / (tf.sqrt(tf.reduce_sum(
@@ -1335,6 +1349,23 @@ class HoMM_model(object):
         train_base = self.run_config["train_base"]
         epoch_s = "%i, " % epoch
 
+        if train_meta:
+            meta_names, meta_losses = self.run_meta_loss_eval()
+            meta_true_names, meta_true_losses = self.run_meta_true_eval()
+
+            if epoch == 0:
+                self.meta_true_loss_format = ", ".join(["%f" for _ in meta_true_names]) + "\n"
+                with open(self.run_config["meta_filename"], "w") as fout:
+                    fout.write("epoch, " + ", ".join(meta_true_names) + "\n")
+
+
+            with open(self.run_config["meta_filename"], "a") as fout:
+                formatted_losses = epoch_s + (self.meta_true_loss_format % tuple(
+                    meta_true_losses))
+                fout.write(formatted_losses)
+        else:
+            meta_names, meta_losses = [], []
+
         if train_base:
             base_names, base_losses = self.run_base_eval()
             if epoch == 0:
@@ -1352,20 +1383,6 @@ class HoMM_model(object):
             if print_losses:
                 print(formatted_losses)
         
-        if train_meta:
-            meta_names, meta_losses = self.run_meta_loss_eval()
-            meta_true_names, meta_true_losses = self.run_meta_true_eval()
-
-            if epoch == 0:
-                self.meta_true_loss_format = ", ".join(["%f" for _ in meta_true_names]) + "\n"
-                with open(self.run_config["meta_filename"], "w") as fout:
-                    fout.write("epoch, " + ", ".join(meta_true_names) + "\n")
-
-
-            with open(self.run_config["meta_filename"], "a") as fout:
-                formatted_losses = epoch_s + (self.meta_true_loss_format % tuple(
-                    meta_true_losses))
-                fout.write(formatted_losses)
 
         # language evaluation
         if self.run_config["train_language_base"]:
