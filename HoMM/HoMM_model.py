@@ -509,7 +509,7 @@ class HoMM_model(object):
                                                lang_keep_prob_ph)
 
                     func_embeddings = slim.fully_connected(language_hidden,
-                                                           num_hidden_hyper,
+                                                           z_dim,
                                                            activation_fn=None)
                 return func_embeddings
 
