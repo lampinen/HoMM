@@ -549,15 +549,21 @@ class HoMM_model(object):
                          architecture_config["z_dim"]],
                         dtype=tf.float32)
 
-        # don't update cached embeddings if not persistent -- will be updated manually
+        # don't update cached embeddings if not persistent -- will be updated
+        # manually. However, for certain extensions, we still need to keep an
+        # updatable copy around.
         if not architecture_config["persistent_task_reps"]:
+            self.unstopped_persistent_embeddings = self.persistent_embeddings
             self.persistent_embeddings = tf.stop_gradient(self.persistent_embeddings)
 
         if self.separate_targ_net:
-            def _get_persistent_embeddings(task_indices, target_net=False):
+            def _get_persistent_embeddings(task_indices, target_net=False,
+                                           unstopped=False):
                 if target_net:
                     persistent_embs = self.persistent_embeddings_tn
 
+                elif unstopped:
+                    persistent_embs = self.unstopped_persistent_embeddings
                 else:
                     persistent_embs = self.persistent_embeddings
 
@@ -565,14 +571,21 @@ class HoMM_model(object):
                                               task_indices)
 
         else:
-            def _get_persistent_embeddings(task_indices):
-                persistent_embs = self.persistent_embeddings
+            def _get_persistent_embeddings(task_indices,
+                                           unstopped=False):
+                if unstopped:
+                    persistent_embs = self.unstopped_persistent_embeddings
+                else:
+                    persistent_embs = self.persistent_embeddings
 
                 return tf.nn.embedding_lookup(persistent_embs,
                                               task_indices)
 
         self.lookup_cached_emb = _get_persistent_embeddings(
             self.task_index_ph)
+
+        self.lookup_cached_unstopped_emb = _get_persistent_embeddings(
+            self.task_index_ph, unstopped=True)
 
         if self.separate_targ_net:
             self.lookup_cached_emb_tn = _get_persistent_embeddings(
@@ -633,19 +646,27 @@ class HoMM_model(object):
             self.meta_map_combined_emb = self.meta_map_guess_emb
 
         if self.tkp < 1.:  # dropout on task reps
-             self.base_combined_emb = tf.nn.dropout(self.base_combined_emb, self.keep_prob_ph)
-             self.meta_class_combined_emb = tf.nn.dropout(self.meta_class_combined_emb, self.keep_prob_ph)
-             self.meta_map_combined_emb = tf.nn.dropout(self.meta_map_combined_emb, self.keep_prob_ph)
-             self.lookup_cached_emb = tf.nn.dropout(self.lookup_cached_emb, self.keep_prob_ph)
-             if self.run_config["train_language"]:
-                 self.language_function_emb = tf.nn.dropout(self.language_function_emb, self.keep_prob_ph)
+            self.base_combined_emb = tf.nn.dropout(
+                self.base_combined_emb, self.keep_prob_ph)
+            self.meta_class_combined_emb = tf.nn.dropout(
+                self.meta_class_combined_emb, self.keep_prob_ph)
+            self.meta_map_combined_emb = tf.nn.dropout(
+                self.meta_map_combined_emb, self.keep_prob_ph)
+            self.lookup_cached_emb = tf.nn.dropout(
+                self.lookup_cached_emb, self.keep_prob_ph)
+            self.lookup_cached_unstopped_emb = tf.nn.dropout(
+                self.lookup_cached_unstopped_emb, self.keep_prob_ph)
+            if self.run_config["train_language"]:
+                self.language_function_emb = tf.nn.dropout(
+                    self.language_function_emb, self.keep_prob_ph)
 
         ## hyper_network: Z -> (F: Z -> Z)
         self.feed_embedding_ph = tf.placeholder(np.float32,
                                                 [1, z_dim])
 
         if self.tkp < 1.:  # dropout on task reps
-            fed_embedding = tf.nn.dropout(self.feed_embedding_ph, self.keep_prob_ph) 
+            fed_embedding = tf.nn.dropout(
+                self.feed_embedding_ph, self.keep_prob_ph) 
         else:
             fed_embedding = self.feed_embedding_ph
 
@@ -761,6 +782,7 @@ class HoMM_model(object):
 
         self.fed_emb_task_params = _hyper_network(fed_embedding)
         self.cached_emb_task_params = _hyper_network(self.lookup_cached_emb)
+        self.cached_unstopped_emb_task_params = _hyper_network(self.lookup_cached_unstopped_emb)
         if self.separate_targ_net:
             with tf.variable_scope("target_net", reuse=True):
                 self.cached_emb_task_params_tn = _hyper_network(self.lookup_cached_emb_tn, reuse=True)
@@ -811,6 +833,10 @@ class HoMM_model(object):
             self.cached_emb_task_params, self.processed_input)
         self.base_cached_emb_output = output_processor(
             self.base_cached_emb_raw_output)
+        self.base_cached_unstopped_emb_raw_output = _task_network(
+            self.cached_unstopped_emb_task_params, self.processed_input)
+        self.base_cached_unstopped_emb_output = output_processor(
+            self.base_cached_unstopped_emb_raw_output)
         if self.separate_targ_net:
             self.base_cached_emb_raw_output_tn = _task_network(
                 self.cached_emb_task_params_tn, self.processed_input_tn)
@@ -859,6 +885,9 @@ class HoMM_model(object):
             self.base_cached_emb_output = tf.boolean_mask(self.base_cached_emb_unmasked_output,
                                                           self.base_target_mask_ph)
 
+            self.base_cached_unstopped_emb_unmasked_output = self.base_cached_unstopped_emb_output
+            self.base_cached_unstopped_emb_output = tf.boolean_mask(self.base_cached_unstopped_emb_unmasked_output,
+                                                          self.base_target_mask_ph)
             if self.run_config["train_language_base"]:
                 self.base_lang_unmasked_output = self.base_lang_output
                 self.base_lang_output = tf.boolean_mask(self.base_lang_unmasked_output,
@@ -901,6 +930,9 @@ class HoMM_model(object):
         self.total_base_cached_emb_loss = base_loss(
             self.base_cached_emb_output, self.base_targets) 
 
+        self.total_base_cached_unstopped_emb_loss = base_loss(
+            self.base_cached_unstopped_emb_output, self.base_targets) 
+
         self.total_meta_class_cached_emb_loss = meta_class_loss(
             self.meta_class_cached_emb_output_logits, self.meta_class_ph) 
 
@@ -933,6 +965,12 @@ class HoMM_model(object):
         self.meta_class_train_op = optimizer.minimize(self.total_meta_class_train_loss)
         self.meta_map_train_op = optimizer.minimize(self.total_meta_map_train_loss)
 
+        # for some follow-up experiments, we optimize cached embeddings after
+        # guessing them zero-shot, to show the improved efficiency of learning
+        # from a good guess at the solution.
+        self.optimize_cached_op = optimizer.minimize(self.total_base_cached_unstopped_emb_loss,
+                                                     var_list=[self.unstopped_persistent_embeddings])
+
         if self.run_config["train_language_base"]:
             self.base_lang_train_op = optimizer.minimize(self.total_base_lang_loss)
         if self.run_config["train_language_meta"]:
@@ -942,7 +980,7 @@ class HoMM_model(object):
             learner_vars = [v for v in tf.trainable_variables() if "target_net" not in v.name]
             target_vars = [v for v in tf.trainable_variables() if "target_net" in v.name]
 
-            # there may be extra vars in the learner, e.g. because language is in learner but not target
+            # there may be extra vars in the learner
             matched_learner_vars = [v for v_targ in target_vars for v in learner_vars if v.name == "/".join(v_targ.name.split("/")[1:])]  
 
             ## copy learner to target
@@ -1503,3 +1541,87 @@ class HoMM_model(object):
                     language_learning_rate *= language_lr_decay
 
             self.end_epoch_calls(epoch)
+
+    def base_optimization_step(self, task, lr):
+        feed_dict = self.build_feed_dict(task, lr=lr, call_type="base_cached_train")
+        self.sess.run(self.optimize_cached_op, feed_dict=feed_dict)
+
+    def guess_embeddings_and_optimize(self, num_optimization_epochs=1000, eval_every=50, optimization_rate=1e-4):
+        self.fill_buffers(num_data_points=self.architecture_config["memory_buffer_size"])
+        self.update_base_task_embeddings()
+        self.update_meta_task_embeddings()
+
+        # update base embedding for eval tasks with meta-mapped versions
+        update_inds = []
+        update_values = []
+        for meta_mapping in self.meta_map_eval_tasks + self.meta_map_train_tasks:
+            meta_dataset = self.meta_datasets[meta_mapping]["eval"]
+
+            feed_dict = self.build_feed_dict(meta_mapping,
+                                             call_type="metamap_cached_eval")
+            result_embeddings = self.sess.run(self.meta_map_output,
+                                              feed_dict=feed_dict)
+
+            i = len(self.meta_pairings[meta_mapping]["train"])
+            for (task, other) in self.meta_pairings[meta_mapping]["eval"]:
+                mapped_embedding = result_embeddings[i, :]
+
+                _, _, other_index = self.base_task_lookup(other)
+                update_inds.append(other_index)
+                update_values.append(mapped_embedding)
+                i += 1
+
+        self.sess.run(
+            self.update_embeddings,
+            feed_dict={
+                self.task_index_ph: np.array(update_inds, dtype=np.int32),
+                self.update_persistent_embeddings_ph: update_values
+            })
+
+        # set up eval and run
+        opt_filename = self.filename_prefix + "guess_opt_losses.csv"
+        def _do_eval(epoch):
+            epoch_s = "%i, " % epoch
+            base_names, base_losses = self.run_base_eval()
+            if epoch == 0:
+                self.opt_loss_format = ", ".join(["%f" for _ in base_names]) + "\n"
+
+                # write headers and overwrite existing file 
+                with open(opt_filename, "w") as fout:
+                    fout.write("epoch, " + ", ".join(base_names) + "\n")
+            with open(opt_filename, "a") as fout:
+                formatted_losses = epoch_s + (self.opt_loss_format % tuple(
+                    base_losses))
+                fout.write(formatted_losses)
+            print(formatted_losses)
+
+        _do_eval(epoch=0)
+        for epoch in range(1, num_optimization_epochs+1):
+            for task in self.base_eval_tasks:
+                self.base_optimization_step(task, optimization_rate)
+
+            if epoch % eval_every == 0:
+                _do_eval(epoch=epoch)
+
+
+        # now repeat with small random initial embeddings
+        opt_filename = self.filename_prefix + "random_opt_losses.csv"
+        update_inds = [self.base_task_lookup(t)[2] for t in self.base_eval_tasks]
+        z_dim = self.architecture_config["z_dim"]
+        scale = (1. / np.sqrt(z_dim))  # will be very roughly unit-length in expectation
+        update_values = scale * np.random.normal(size=[len(update_inds), z_dim]) 
+
+        self.sess.run(
+            self.update_embeddings,
+            feed_dict={
+                self.task_index_ph: np.array(update_inds, dtype=np.int32),
+                self.update_persistent_embeddings_ph: update_values
+            })
+
+        _do_eval(epoch=0)
+        for epoch in range(1, num_optimization_epochs+1):
+            for task in self.base_eval_tasks:
+                self.base_optimization_step(task, optimization_rate)
+
+            if epoch % eval_every == 0:
+                _do_eval(epoch=epoch)
