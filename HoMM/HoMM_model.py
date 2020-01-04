@@ -1546,12 +1546,16 @@ class HoMM_model(object):
         feed_dict = self.build_feed_dict(task, lr=lr, call_type="base_cached_train")
         self.sess.run(self.optimize_cached_op, feed_dict=feed_dict)
 
-    def guess_embeddings_and_optimize(self, num_optimization_epochs=1000, eval_every=50, optimization_rate=1e-4):
+    def guess_embeddings_and_optimize(self, num_optimization_epochs=1000,
+                                      eval_every=50, optimization_rate=1e-4,
+                                      random_init_scale=1.):
         self.fill_buffers(num_data_points=self.architecture_config["memory_buffer_size"])
         self.update_base_task_embeddings()
         self.update_meta_task_embeddings()
 
         # update base embedding for eval tasks with meta-mapped versions
+        # note that its possible some will get written multiple times...
+        # at present though, there's not a good fair way to pick a best one.
         update_inds = []
         update_values = []
         for meta_mapping in self.meta_map_eval_tasks + self.meta_map_train_tasks:
@@ -1603,12 +1607,42 @@ class HoMM_model(object):
             if epoch % eval_every == 0:
                 _do_eval(epoch=epoch)
 
+        # control with embedding for eval tasks being task embedding of random
+        # trained task
+        opt_filename = self.filename_prefix + "arbitrary_trained_opt_losses.csv"
+        update_inds = []
+        update_values = []
+        order = np.random.permutation(len(self.base_train_tasks))
+        for eval_i, train_i in enumerate(order[:len(self.base_eval_tasks)]):
+            eval_task = self.base_eval_tasks[eval_i]
+            train_task = self.base_train_tasks[train_i]
+            train_task_emb = self.get_base_cached_embedding(train_task)[0] 
 
-        # now repeat with small random initial embeddings
-        opt_filename = self.filename_prefix + "random_opt_losses.csv"
+            _, _, eval_index = self.base_task_lookup(eval_task)
+            update_inds.append(eval_index)
+            update_values.append(train_task_emb)
+            i += 1
+
+        self.sess.run(
+            self.update_embeddings,
+            feed_dict={
+                self.task_index_ph: np.array(update_inds, dtype=np.int32),
+                self.update_persistent_embeddings_ph: update_values
+            })
+
+        _do_eval(epoch=0)
+        for epoch in range(1, num_optimization_epochs+1):
+            for task in self.base_eval_tasks:
+                self.base_optimization_step(task, optimization_rate)
+
+            if epoch % eval_every == 0:
+                _do_eval(epoch=epoch)
+
+        # control with small random initial embeddings
+        opt_filename = self.filename_prefix + "random_init_opt_losses.csv"
         update_inds = [self.base_task_lookup(t)[2] for t in self.base_eval_tasks]
         z_dim = self.architecture_config["z_dim"]
-        scale = (1. / np.sqrt(z_dim))  # will be very roughly unit-length in expectation
+        scale = (random_init_scale / np.sqrt(z_dim))  # default will be roughly unit
         update_values = scale * np.random.normal(size=[len(update_inds), z_dim]) 
 
         self.sess.run(
