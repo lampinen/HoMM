@@ -549,11 +549,11 @@ class HoMM_model(object):
                          architecture_config["z_dim"]],
                         dtype=tf.float32)
 
+        self.unstopped_persistent_embeddings = self.persistent_embeddings
         # don't update cached embeddings if not persistent -- will be updated
         # manually. However, for certain extensions, we still need to keep an
         # updatable copy around.
-        if not architecture_config["persistent_task_reps"]:
-            self.unstopped_persistent_embeddings = self.persistent_embeddings
+        if architecture_config["persistent_task_reps"]:
             self.persistent_embeddings = tf.stop_gradient(self.persistent_embeddings)
 
         if self.separate_targ_net:
