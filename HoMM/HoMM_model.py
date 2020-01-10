@@ -1243,6 +1243,34 @@ class HoMM_model(object):
 
         return names, losses
 
+    def meta_class_lang_loss_eval(self, meta_task):
+        feed_dict = self.build_feed_dict(meta_task, call_type="metaclass_lang_eval")
+        return self.sess.run(self.total_meta_class_lang_loss, feed_dict=feed_dict)
+        
+    def meta_map_lang_loss_eval(self, meta_task):
+        feed_dict = self.build_feed_dict(meta_task, call_type="metamap_lang_eval")
+        return self.sess.run(self.total_meta_map_lang_loss, feed_dict=feed_dict)
+
+    def run_meta_language_loss_eval(self):
+        names = []
+        losses = []
+        for meta_tasks, meta_class, train_or_eval in zip(
+                [self.meta_class_train_tasks,
+                 self.meta_class_eval_tasks,
+                 self.meta_map_train_tasks,
+                 self.meta_map_eval_tasks],
+                [True, True, False, False],
+                ["train", "eval", "train", "eval"]):
+            for meta_task in meta_tasks:
+                if meta_class:
+                    loss = self.meta_class_lang_loss_eval(meta_task)
+                else:
+                    loss = self.meta_map_lang_loss_eval(meta_task)
+                names.append(meta_task + ":" + train_or_eval)
+                losses.append(loss)
+
+        return names, losses
+
     def get_meta_guess_embedding(self, meta_task, meta_class):
         """Note: cached base embeddings must be up to date!"""
         call_type = "metaclass_standard_eval" if meta_class else "metamap_standard_eval"
@@ -1299,7 +1327,7 @@ class HoMM_model(object):
 
         feed_dict = self.build_feed_dict(meta_mapping,
                                          call_type="metamap_lang_eval")
-        result_embeddings = self.sess.run(self.meta_map_output,
+        result_embeddings = self.sess.run(self.meta_map_lang_output,
                                           feed_dict=feed_dict) 
 
         names = []
@@ -1445,32 +1473,37 @@ class HoMM_model(object):
         
 
         # language evaluation
+        if self.run_config["train_language_meta"]:
+            lang_meta_names, lang_meta_losses = self.run_meta_language_loss_eval()
+
+            lang_meta_true_names, lang_meta_true_losses = self.run_meta_true_language_eval()
+            if epoch == 0:
+                self.lang_meta_true_loss_format = ", ".join(["%f" for _ in lang_meta_true_names]) + "\n"
+                with open(self.run_config["lang_meta_filename"], "w") as fout:
+                    fout.write("epoch, " + ", ".join(lang_meta_true_names) + "\n")
+
+            with open(self.run_config["lang_meta_filename"], "a") as fout:
+                formatted_losses = epoch_s + (self.lang_meta_true_loss_format % tuple(
+                    lang_meta_true_losses))
+                fout.write(formatted_losses)
+        else:
+            lang_meta_names, lang_meta_losses = [], []
+
+
         if self.run_config["train_language_base"]:
             lang_names, lang_losses = self.run_base_language_eval()
             if epoch == 0:
-                self.lang_loss_format = ", ".join(["%f" for _ in lang_names]) + "\n"
+                self.lang_loss_format = ", ".join(["%f" for _ in lang_names + lang_meta_names]) + "\n"
                 with open(self.run_config["lang_filename"], "w") as fout:
-                    fout.write("epoch, " + ", ".join(lang_names) + "\n")
+                    fout.write("epoch, " + ", ".join(lang_names + lang_meta_names) + "\n")
 
             with open(self.run_config["lang_filename"], "a") as fout:
                 formatted_losses = epoch_s + (self.lang_loss_format % tuple(
-                    lang_losses))
+                    lang_losses + lang_meta_losses))
                 fout.write(formatted_losses)
 
             if print_losses and not train_base:
                 print(formatted_losses)
-
-        if self.run_config["train_language_meta"]:
-            lang_meta_names, lang_meta_losses = self.run_meta_true_language_eval()
-            if epoch == 0:
-                self.lang_meta_loss_format = ", ".join(["%f" for _ in lang_meta_names]) + "\n"
-                with open(self.run_config["lang_meta_filename"], "w") as fout:
-                    fout.write("epoch, " + ", ".join(lang_meta_names) + "\n")
-
-            with open(self.run_config["lang_meta_filename"], "a") as fout:
-                formatted_losses = epoch_s + (self.lang_meta_loss_format % tuple(
-                    lang_meta_losses))
-                fout.write(formatted_losses)
 
     def end_epoch_calls(self, epoch): 
         """Can be overridden to change things like exploration over learning."""
