@@ -165,6 +165,7 @@ class HoMM_model(object):
         self.run_config["loss_filename"] = self.filename_prefix + "losses.csv"
         self.run_config["meta_filename"] = self.filename_prefix + "meta_true_losses.csv"
         self.run_config["lang_filename"] = self.filename_prefix + "language_losses.csv"
+        self.run_config["lang_meta_filename"] = self.filename_prefix + "language_meta_true_losses.csv"
         if not os.path.exists(self.run_config["output_dir"]):
             os.makedirs(self.run_config["output_dir"])
 
@@ -300,6 +301,8 @@ class HoMM_model(object):
                 task_name, _, _ = self.base_task_lookup(task)
                 self.task_name_to_lang_input[task_name] = np.array(
                     [self.intify_task(task_name)], dtype=np.int32)
+            if self.run_config["train_base"]:
+                warnings.warn("Training both example-based and language-based base tasks: all meta-mappings will use the former.")
 
         if self.run_config["train_language_meta"]:
             for mt in all_meta_tasks:
@@ -467,8 +470,6 @@ class HoMM_model(object):
 
         ## language processing: lang -> Z
         if self.run_config["train_language"]:
-            if self.run_config["train_language_meta"]:
-                raise NotImplementedError("Language for meta tasks has not been tested in this version of the code, some debugging may be needed")
             lang_num_hidden = architecture_config["lang_num_hidden"]
             num_lstm_layers = architecture_config["num_lstm_layers"]
             max_sentence_len = architecture_config["max_sentence_len"]
@@ -866,6 +867,12 @@ class HoMM_model(object):
         if self.run_config["train_language_meta"]:
             self.meta_map_lang_output = _task_network(self.lang_task_params,
                                                       meta_input_embeddings) 
+        if meta_class_processor_var is not None:
+            self.meta_class_lang_output_logits = tf.matmul(
+                self.meta_map_lang_output, meta_class_processor_var)
+        else:
+            self.meta_class_lang_output_logits = alternative_meta_class_out_processor(
+                self.meta_map_lang_output, reuse=True)
 
         if self.architecture_config["output_masking"]:
             # E.g. in RL we have to mask base output in loss because can only
@@ -953,6 +960,8 @@ class HoMM_model(object):
         if self.run_config["train_language_meta"]:
             self.total_meta_map_lang_loss = meta_loss(self.meta_map_lang_output,
                                                       meta_target_embeddings) 
+            self.total_meta_class_lang_loss = meta_class_loss(
+                self.meta_class_lang_output_logits, self.meta_class_ph) 
 
         if architecture_config["optimizer"] == "Adam":
             optimizer = tf.train.AdamOptimizer(self.lr_ph)
@@ -975,6 +984,7 @@ class HoMM_model(object):
             self.base_lang_train_op = optimizer.minimize(self.total_base_lang_loss)
         if self.run_config["train_language_meta"]:
             self.meta_map_lang_train_op = optimizer.minimize(self.total_meta_map_lang_loss)
+            self.meta_class_lang_train_op = optimizer.minimize(self.total_meta_class_lang_loss)
 
         if self.separate_targ_net:
             learner_vars = [v for v in tf.trainable_variables() if "target_net" not in v.name]
@@ -1194,7 +1204,7 @@ class HoMM_model(object):
         res = self.sess.run(self.base_guess_emb, feed_dict=feed_dict)
         return res
 
-    def get_language_embedding(self, intified_task):
+    def get_language_embedding(self, task):
         feed_dict = self.build_feed_dict(task, call_type="base_lang_eval")
         res = self.sess.run(self.language_function_emb, feed_dict=feed_dict)
         return res
@@ -1332,16 +1342,28 @@ class HoMM_model(object):
         feed_dict = self.build_feed_dict(meta_task, lr=meta_lr, call_type="metamap_standard_train")
         self.sess.run(self.meta_map_train_op, feed_dict=feed_dict)
 
+    def meta_class_language_train_step(self, meta_task, meta_lr):
+        feed_dict = self.build_feed_dict(meta_task, lr=meta_lr, call_type="metaclass_lang_train")
+        self.sess.run(self.meta_class_lang_train_op, feed_dict=feed_dict)
+
+    def meta_map_language_train_step(self, meta_task, meta_lr):
+        feed_dict = self.build_feed_dict(meta_task, lr=meta_lr, call_type="metamap_lang_train")
+        self.sess.run(self.meta_map_lang_train_op, feed_dict=feed_dict)
+
     def update_base_task_embeddings(self):
         """Updates cached embeddings (for use if embeddings are not persistent)"""
         if self.architecture_config["persistent_task_reps"]:
             warnings.warn("Overwriting persistent embeddings... Is this "
                           "intentional?")
-
+        train_base = self.run_config["train_base"]
+        train_lang_base = self.run_config["train_language_base"]
         update_inds = []
         update_values = []
         for task in self.base_train_tasks + self.base_eval_tasks:
-            task_emb = self.get_base_guess_embedding(task)
+            if train_base:
+                task_emb = self.get_base_guess_embedding(task)
+            elif train_lang_base:  # if training language base only, generate these embeddings from language instead
+                task_emb = self.get_language_embedding(task)
             _, _, task_index = self.base_task_lookup(task)
             update_inds.append(task_index)
             update_values.append(task_emb[0])
@@ -1441,7 +1463,7 @@ class HoMM_model(object):
         if self.run_config["train_language_meta"]:
             lang_meta_names, lang_meta_losses = self.run_meta_true_language_eval()
             if epoch == 0:
-                self.lang_meta_loss_format = ", ".join(["%f" for _ in lang_names]) + "\n"
+                self.lang_meta_loss_format = ", ".join(["%f" for _ in lang_meta_names]) + "\n"
                 with open(self.run_config["lang_meta_filename"], "w") as fout:
                     fout.write("epoch, " + ", ".join(lang_meta_names) + "\n")
 
@@ -1522,8 +1544,7 @@ class HoMM_model(object):
                         self.meta_map_language_train_step(task, language_learning_rate)
 
             if not(self.architecture_config["persistent_task_reps"]):
-                if train_base:
-                    self.update_base_task_embeddings()  # make sure we're up to date
+                self.update_base_task_embeddings()  # make sure we're up to date
                 if train_meta:
                     self.update_meta_task_embeddings()
 
