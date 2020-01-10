@@ -867,12 +867,12 @@ class HoMM_model(object):
         if self.run_config["train_language_meta"]:
             self.meta_map_lang_output = _task_network(self.lang_task_params,
                                                       meta_input_embeddings) 
-        if meta_class_processor_var is not None:
-            self.meta_class_lang_output_logits = tf.matmul(
-                self.meta_map_lang_output, meta_class_processor_var)
-        else:
-            self.meta_class_lang_output_logits = alternative_meta_class_out_processor(
-                self.meta_map_lang_output, reuse=True)
+            if meta_class_processor_var is not None:
+                self.meta_class_lang_output_logits = tf.matmul(
+                    self.meta_map_lang_output, meta_class_processor_var)
+            else:
+                self.meta_class_lang_output_logits = alternative_meta_class_out_processor(
+                    self.meta_map_lang_output, reuse=True)
 
         if self.architecture_config["output_masking"]:
             # E.g. in RL we have to mask base output in loss because can only
