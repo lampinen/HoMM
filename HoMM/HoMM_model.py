@@ -1521,6 +1521,7 @@ class HoMM_model(object):
         learning_rate = self.run_config["init_learning_rate"]
         language_learning_rate = self.run_config["init_language_learning_rate"]
         meta_learning_rate = self.run_config["init_meta_learning_rate"]
+        language_meta_learning_rate = self.run_config["init_language_meta_learning_rate"]
         
         num_epochs = self.run_config["num_epochs"]
         eval_every = self.run_config["eval_every"]
@@ -1531,9 +1532,12 @@ class HoMM_model(object):
         min_learning_rate = self.run_config["min_learning_rate"]
         min_meta_learning_rate = self.run_config["min_meta_learning_rate"]
 
-        if train_language_base or train_language_meta:
+        if train_language_base:
             language_lr_decay = self.run_config["language_lr_decay"]
             min_language_learning_rate = self.run_config["min_language_learning_rate"]
+        if train_language_meta:
+            language_meta_lr_decay = self.run_config["language_meta_lr_decay"]
+            min_language_meta_learning_rate = self.run_config["min_language_meta_learning_rate"]
 
         if not(self.architecture_config["persistent_task_reps"]):
             self.update_base_task_embeddings()  # make sure we're up to date
@@ -1574,7 +1578,7 @@ class HoMM_model(object):
                     if train_meta:
                         self.meta_map_train_step(task, meta_learning_rate)
                     if train_language_meta:
-                        self.meta_map_language_train_step(task, language_learning_rate)
+                        self.meta_map_language_train_step(task, language_meta_learning_rate)
 
             if not(self.architecture_config["persistent_task_reps"]):
                 self.update_base_task_embeddings()  # make sure we're up to date
@@ -1591,9 +1595,11 @@ class HoMM_model(object):
                 if meta_learning_rate > min_meta_learning_rate:
                     meta_learning_rate *= meta_lr_decay
 
-                if (train_language_base or train_language_meta) and language_learning_rate > min_language_learning_rate:
+                if train_language_base and language_learning_rate > min_language_learning_rate:
                     language_learning_rate *= language_lr_decay
 
+                if train_language_meta and language_meta_learning_rate > min_language_meta_learning_rate:
+                    language_meta_learning_rate *= language_meta_lr_decay
             self.end_epoch_calls(epoch)
 
     def base_optimization_step(self, task, lr):

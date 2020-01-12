@@ -13,13 +13,16 @@ default_run_config = {
     "init_learning_rate": 3e-5,  # initial learning rate for base tasks
     "init_language_learning_rate": 3e-5,  # for language-cued tasks
     "init_meta_learning_rate": 1e-5,  # for meta-classification and mappings
+    "init_language_meta_learning_rate": 1e-5,  # for language-cued meta-mappings
 
     "lr_decay": 0.85,  # how fast base task lr decays (multiplicative)
     "language_lr_decay": 0.8, 
     "meta_lr_decay": 0.85,
+    "language_meta_lr_decay": 0.85, 
     "lr_decays_every": 100,  # lr decays happen once per this many epochs
 
     "min_learning_rate": 3e-8,  # can't decay past these minimum values 
     "min_language_learning_rate": 3e-8,
     "min_meta_learning_rate": 1e-7,
+    "min_language_meta_learning_rate": 1e-7,
 }
