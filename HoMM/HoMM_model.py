@@ -1667,6 +1667,36 @@ class HoMM_model(object):
             if epoch % eval_every == 0:
                 _do_eval(epoch=epoch)
 
+        # control with embedding for eval tasks being centroid of trained tasks 
+        opt_filename = self.filename_prefix + "trained_centroid_opt_losses.csv"
+        update_inds = []
+        update_values = []
+        centroid_emb = np.zeros([self.architecture_config["z_dim"]], dtype=np.float32)
+        for train_task in self.base_train_tasks: 
+            centroid_emb += self.get_base_cached_embedding(train_task)[0] 
+        centroid_emb /= len(self.base_train_tasks)
+
+        for eval_task in self.base_eval_tasks:
+            _, _, eval_index = self.base_task_lookup(eval_task)
+            update_inds.append(eval_index)
+            update_values.append(centroid_emb)
+            i += 1
+
+        self.sess.run(
+            self.update_embeddings,
+            feed_dict={
+                self.task_index_ph: np.array(update_inds, dtype=np.int32),
+                self.update_persistent_embeddings_ph: update_values
+            })
+
+        _do_eval(epoch=0)
+        for epoch in range(1, num_optimization_epochs+1):
+            for task in self.base_eval_tasks:
+                self.base_optimization_step(task, optimization_rate)
+
+            if epoch % eval_every == 0:
+                _do_eval(epoch=epoch)
+
         # control with embedding for eval tasks being task embedding of random
         # trained task
         opt_filename = self.filename_prefix + "arbitrary_trained_opt_losses.csv"
