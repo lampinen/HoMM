@@ -366,8 +366,10 @@ class HoMM_model(object):
 
             if self.separate_targ_net:
                 with tf.variable_scope("target_net", reuse=False):
+                    target_processor_tn = lambda x: default_target_processor(
+                        x, IO_num_hidden, z_dim, internal_nonlinearity)
                     (processed_targets_tn, target_processor_var_tn,
-                     meta_class_processor_var_tn) = target_processor(self.base_target_ph)
+                     meta_class_processor_var_tn) = target_processor_tn(self.base_target_ph)
         else:
             if output_processor is None or meta_class_processor is None:
                 raise ValueError("You cannot use the default output or "
@@ -413,9 +415,11 @@ class HoMM_model(object):
                 x, meta_class_processor_var)
         
         processed_class = meta_class_processor(self.meta_class_ph) 
-        if self.separate_targ_net:
-            with tf.variable_scope("target_net", reuse=False):
-                processed_class = meta_class_processor(self.meta_class_ph) 
+#        if self.separate_targ_net:
+#            with tf.variable_scope("target_net", reuse=False):
+#                meta_class_processor_tn = lambda x: default_meta_class_processor(
+#                    x, meta_class_processor_var_tn)
+#                processed_class = meta_class_processor_tn(self.meta_class_ph) 
 
 
         # function embedding "guessing" network / meta network
