@@ -600,7 +600,8 @@ class HoMM_model(object):
             def _get_combined_embedding_and_match_loss(guess_embedding, task_index,
                                                        guess_weight,
                                                        target_net=False):
-                cached_embedding = _get_persistent_embeddings(task_index)
+                cached_embedding = _get_persistent_embeddings(
+                    task_index, target_net=target_net)
                 if guess_weight == "varied":
                     guess_weight = tf.random_uniform([], dtype=tf.float32)
 
@@ -617,7 +618,8 @@ class HoMM_model(object):
                 (self.base_combined_emb_tn,
                  _) = _get_combined_embedding_and_match_loss(
                     self.base_guess_emb_tn, self.task_index_ph,
-                    architecture_config["combined_emb_guess_weight"])
+                    architecture_config["combined_emb_guess_weight"],
+                    target_net=True)
 
         meta_input_embeddings = _get_persistent_embeddings(
             self.meta_input_indices_ph)
