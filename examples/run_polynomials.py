@@ -28,20 +28,7 @@ run_config.update({
 })
 
 architecture_config = default_architecture_config.default_architecture_config
-if False:  # enable for persistent reps
-    architecture_config.update({
-        "persistent_task_reps": True,
-        "combined_emb_guess_weight": "varied",
-        "emb_match_loss_weight": 0.2,
-    })
-    run_config.update({
-        "output_dir": "polynomials_results_persistent/",
-    })
-if False:  # enable for no_meta 
-    run_config.update({
-        "train_meta": False,
-        "output_dir": run_config["output_dir"][:-1] + "no_meta/", 
-    })
+
 
 class poly_HoMM_model(HoMM_model.HoMM_model):
     def __init__(self, run_config=None):
