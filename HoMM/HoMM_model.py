@@ -575,8 +575,9 @@ class HoMM_model(object):
                                               task_indices)
 
         else:
-            def _get_persistent_embeddings(task_indices,
+            def _get_persistent_embeddings(task_indices, target_net=False,
                                            unstopped=False):
+                del target_net  # unused
                 if unstopped:
                     persistent_embs = self.unstopped_persistent_embeddings
                 else:
