@@ -391,7 +391,6 @@ class HoMM_model(object):
             def output_processor_tn(x):
                 with tf.variable_scope("target_net", reuse=False):
                     return output_processor(x)
-                
 
         if outcome_shape is not None:
             if outcome_processor is None:
