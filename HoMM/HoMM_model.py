@@ -1755,3 +1755,15 @@ class HoMM_model(object):
 
             if epoch % eval_every == 0:
                 _do_eval(epoch=epoch)
+
+        # from meta-learning guess
+        self.update_base_task_embeddings()
+        opt_filename = self.filename_prefix + "meta_learning_opt_losses.csv"
+
+        _do_eval(epoch=0)
+        for epoch in range(1, num_optimization_epochs+1):
+            for task in self.base_eval_tasks:
+                self.base_optimization_step(task, optimization_rate)
+
+            if epoch % eval_every == 0:
+                _do_eval(epoch=epoch)
