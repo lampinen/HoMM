@@ -391,7 +391,6 @@ class HoMM_model(object):
             def output_processor_tn(x):
                 with tf.variable_scope("target_net", reuse=False):
                     return output_processor(x)
-                
 
         if outcome_shape is not None:
             if outcome_processor is None:
@@ -576,8 +575,9 @@ class HoMM_model(object):
                                               task_indices)
 
         else:
-            def _get_persistent_embeddings(task_indices,
+            def _get_persistent_embeddings(task_indices, target_net=False,
                                            unstopped=False):
+                del target_net  # unused
                 if unstopped:
                     persistent_embs = self.unstopped_persistent_embeddings
                 else:
