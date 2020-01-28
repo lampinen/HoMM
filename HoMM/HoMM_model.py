@@ -1114,7 +1114,7 @@ class HoMM_model(object):
             meta_input_indices = meta_dataset[train_or_eval]["in"]
             feed_dict[self.meta_input_indices_ph] = meta_input_indices
             if train_or_eval == "train":
-                if len(meta_input_indices) < self.meta_batch_size:
+                if len(meta_input_indices) < 2 * self.meta_batch_size:
                     meta_batch_size = len(meta_input_indices) // 2
                 else:
                     meta_batch_size = self.meta_batch_size
