@@ -426,7 +426,7 @@ class HoMM_model(object):
         self.guess_input_mask_ph = tf.placeholder(tf.bool, shape=[None]) # which datapoints get excluded from the guess
         self.meta_batch_size = architecture_config["meta_batch_size"]  # this is used for generating guess masks
 
-        def _meta_network(embedded_inputs, embedded_targets,
+        def meta_network(embedded_inputs, embedded_targets,
                           guess_mask=self.guess_input_mask_ph, reuse=True):
             num_hidden_meta = architecture_config["M_num_hidden"]
             with tf.variable_scope('meta', reuse=reuse):
@@ -452,22 +452,22 @@ class HoMM_model(object):
                 return guess_embedding
 
         if outcome_shape is not None:  # outcomes seen by M != targets
-            self.base_guess_emb = _meta_network(self.processed_input,
+            self.base_guess_emb = meta_network(self.processed_input,
                                                 processed_outcomes,
                                                 reuse=False)
             if self.separate_targ_net:
                 with tf.variable_scope("target_net", reuse=False):
-                    self.base_guess_emb_tn = _meta_network(self.processed_input_tn,
+                    self.base_guess_emb_tn = meta_network(self.processed_input_tn,
                                                            processed_outcomes_tn,
                                                            reuse=False)
 
         else:
-            self.base_guess_emb = _meta_network(self.processed_input,
+            self.base_guess_emb = meta_network(self.processed_input,
                                                 processed_targets,
                                                 reuse=False)
             if self.separate_targ_net:
                 with tf.variable_scope("target_net", reuse=False):
-                    self.base_guess_emb_tn = _meta_network(self.processed_input_tn,
+                    self.base_guess_emb_tn = meta_network(self.processed_input_tn,
                                                            processed_targets_tn,
                                                            reuse=False)
 
@@ -482,7 +482,7 @@ class HoMM_model(object):
             self.language_input_ph = tf.placeholder(
                 tf.int32, shape=[1, max_sentence_len])
 
-            def _language_network(language_input, reuse=False):
+            def language_network(language_input, reuse=False):
                 """Maps from language to a function embedding"""
                 with tf.variable_scope("word_embeddings", reuse=reuse):
                     self.word_embeddings = tf.get_variable(
@@ -517,11 +517,11 @@ class HoMM_model(object):
                                                            activation_fn=None)
                 return func_embeddings
 
-            self.language_function_emb = _language_network(self.language_input_ph,
+            self.language_function_emb = language_network(self.language_input_ph,
                                                            reuse=False)
             if self.separate_targ_net:
                 with tf.variable_scope("target_net", reuse=False):
-                    self.language_function_emb_tn = _language_network(self.language_input_ph,
+                    self.language_function_emb_tn = language_network(self.language_input_ph,
                                                                       reuse=False)
 
 
@@ -561,7 +561,7 @@ class HoMM_model(object):
             self.persistent_embeddings = tf.stop_gradient(self.persistent_embeddings)
 
         if self.separate_targ_net:
-            def _get_persistent_embeddings(task_indices, target_net=False,
+            def get_persistent_embeddings(task_indices, target_net=False,
                                            unstopped=False):
                 if target_net:
                     persistent_embs = self.persistent_embeddings_tn
@@ -575,7 +575,7 @@ class HoMM_model(object):
                                               task_indices)
 
         else:
-            def _get_persistent_embeddings(task_indices, target_net=False,
+            def get_persistent_embeddings(task_indices, target_net=False,
                                            unstopped=False):
                 del target_net  # unused
                 if unstopped:
@@ -586,21 +586,21 @@ class HoMM_model(object):
                 return tf.nn.embedding_lookup(persistent_embs,
                                               task_indices)
 
-        self.lookup_cached_emb = _get_persistent_embeddings(
+        self.lookup_cached_emb = get_persistent_embeddings(
             self.task_index_ph)
 
-        self.lookup_cached_unstopped_emb = _get_persistent_embeddings(
+        self.lookup_cached_unstopped_emb = get_persistent_embeddings(
             self.task_index_ph, unstopped=True)
 
         if self.separate_targ_net:
-            self.lookup_cached_emb_tn = _get_persistent_embeddings(
+            self.lookup_cached_emb_tn = get_persistent_embeddings(
                 self.task_index_ph, target_net=True)
 
         if architecture_config["persistent_task_reps"]:
-            def _get_combined_embedding_and_match_loss(guess_embedding, task_index,
+            def get_combined_embedding_and_match_loss(guess_embedding, task_index,
                                                        guess_weight,
                                                        target_net=False):
-                cached_embedding = _get_persistent_embeddings(
+                cached_embedding = get_persistent_embeddings(
                     task_index, target_net=target_net)
                 if guess_weight == "varied":
                     guess_weight = tf.random_uniform([], dtype=tf.float32)
@@ -611,38 +611,38 @@ class HoMM_model(object):
                 return combined_embedding, emb_match_loss
 
             (self.base_combined_emb,
-             self.base_emb_match_loss) = _get_combined_embedding_and_match_loss(
+             self.base_emb_match_loss) = get_combined_embedding_and_match_loss(
                 self.base_guess_emb, self.task_index_ph,
                 architecture_config["combined_emb_guess_weight"])
             if self.separate_targ_net:
                 (self.base_combined_emb_tn,
-                 _) = _get_combined_embedding_and_match_loss(
+                 _) = get_combined_embedding_and_match_loss(
                     self.base_guess_emb_tn, self.task_index_ph,
                     architecture_config["combined_emb_guess_weight"],
                     target_net=True)
 
-        meta_input_embeddings = _get_persistent_embeddings(
+        meta_input_embeddings = get_persistent_embeddings(
             self.meta_input_indices_ph)
-        meta_target_embeddings = _get_persistent_embeddings(
+        meta_target_embeddings = get_persistent_embeddings(
             self.meta_target_indices_ph)
 
         self.meta_input_embeddings = meta_input_embeddings 
         self.meta_target_embeddings = meta_target_embeddings 
 
-        self.meta_class_guess_emb = _meta_network(meta_input_embeddings,
+        self.meta_class_guess_emb = meta_network(meta_input_embeddings,
                                                   processed_class)
-        self.meta_map_guess_emb = _meta_network(meta_input_embeddings,
+        self.meta_map_guess_emb = meta_network(meta_input_embeddings,
                                                 meta_target_embeddings)
 
 
         if architecture_config["persistent_task_reps"]:
             (self.meta_class_combined_emb,
-             self.meta_class_emb_match_loss) = _get_combined_embedding_and_match_loss(
+             self.meta_class_emb_match_loss) = get_combined_embedding_and_match_loss(
                 self.meta_class_guess_emb, self.task_index_ph,
                 architecture_config["combined_emb_guess_weight"])
 
             (self.meta_map_combined_emb,
-             self.meta_map_emb_match_loss) = _get_combined_embedding_and_match_loss(
+             self.meta_map_emb_match_loss) = get_combined_embedding_and_match_loss(
                 self.meta_map_guess_emb, self.task_index_ph,
                 architecture_config["combined_emb_guess_weight"])
         else:
@@ -687,7 +687,7 @@ class HoMM_model(object):
         task_weight_gen_init = tf.random_uniform_initializer(-tw_range,
                                                              tw_range)
 
-        def _hyper_network(function_embedding, reuse=True):
+        def hyper_network(function_embedding, reuse=True):
             with tf.variable_scope('hyper', reuse=reuse):
                 hyper_hidden = function_embedding
                 for _ in range(architecture_config["H_num_hidden_layers"]):
@@ -771,56 +771,143 @@ class HoMM_model(object):
                         
                 return hidden_weights, hidden_biases
 
-        self.base_task_params = _hyper_network(self.base_combined_emb,
-                                               reuse=False)
-        if self.separate_targ_net:
-            with tf.variable_scope("target_net", reuse=False):
-                self.base_task_params_tn = _hyper_network(self.base_combined_emb_tn,
-                                                       reuse=False)
-
-        self.meta_map_task_params = _hyper_network(self.meta_map_combined_emb)
-        self.meta_class_task_params = _hyper_network(self.meta_class_combined_emb)
-
-        if self.run_config["train_language"]:
-            self.lang_task_params = _hyper_network(self.language_function_emb)
+        if not self.architecture_config["task_conditioned_not_hyper"]:  
+            self.base_task_params = hyper_network(self.base_combined_emb,
+                                                   reuse=False)
             if self.separate_targ_net:
                 with tf.variable_scope("target_net", reuse=False):
-                    self.lang_task_params_tn = _hyper_network(self.language_function_emb_tn)
+                    self.base_task_params_tn = hyper_network(self.base_combined_emb_tn,
+                                                           reuse=False)
 
-        self.fed_emb_task_params = _hyper_network(fed_embedding)
-        self.cached_emb_task_params = _hyper_network(self.lookup_cached_emb)
-        self.cached_unstopped_emb_task_params = _hyper_network(self.lookup_cached_unstopped_emb)
-        if self.separate_targ_net:
-            with tf.variable_scope("target_net", reuse=True):
-                self.cached_emb_task_params_tn = _hyper_network(self.lookup_cached_emb_tn, reuse=True)
+            self.meta_map_task_params = hyper_network(self.meta_map_combined_emb)
+            self.meta_class_task_params = hyper_network(self.meta_class_combined_emb)
+
+            if self.run_config["train_language"]:
+                self.lang_task_params = hyper_network(self.language_function_emb)
+                if self.separate_targ_net:
+                    with tf.variable_scope("target_net", reuse=False):
+                        self.lang_task_params_tn = hyper_network(self.language_function_emb_tn)
+
+            self.fed_emb_task_params = hyper_network(fed_embedding)
+            self.cached_emb_task_params = hyper_network(self.lookup_cached_emb)
+            self.cached_unstopped_emb_task_params = hyper_network(self.lookup_cached_unstopped_emb)
+            if self.separate_targ_net:
+                with tf.variable_scope("target_net", reuse=True):
+                    self.cached_emb_task_params_tn = hyper_network(self.lookup_cached_emb_tn, reuse=True)
 
         ## task network F: Z -> Z
-        def _task_network(task_params, processed_input):
-            hweights, hbiases = task_params
-            task_hidden = processed_input
-            for i in range(num_task_hidden_layers):
-                task_hidden = internal_nonlinearity(
-                    tf.matmul(task_hidden, hweights[i]) + hbiases[i])
 
-            raw_output = tf.matmul(task_hidden, hweights[-1]) + hbiases[-1]
 
-            return raw_output
+        if self.architecture_config["task_conditioned_not_hyper"]:  
+            # control where instead of hyper network, just condition task net
+            # on task representation
+            def task_network(task_rep, processed_input, reuse=True):
+                with tf.variable_scope('task_net', reuse=reuse):
+                    task_reps = tf.tile(task_rep, [tf.shape(processed_input)[0], 1])
+                    task_hidden = tf.concat([task_reps, processed_input],
+					    axis=-1)
+                    for _ in range(architecture_config["F_num_hidden_layers"]):
+                        task_hidden = slim.fully_connected(task_hidden, num_hidden_F,
+                                                           activation_fn=internal_nonlinearity)
 
-        self.base_raw_output = _task_network(self.base_task_params,
-                                             self.processed_input)
+                    raw_output = slim.fully_connected(task_hidden, z_dim,
+                                                      activation_fn=None)
+
+                return raw_output
+
+            self.base_raw_output = task_network(self.base_combined_emb,
+                                                 self.processed_input,
+                                                 reuse=False)
+            if self.separate_targ_net:
+                self.base_raw_output_tn = task_network(self.base_combined_emb_tn,
+                                                       self.processed_input_tn)
+
+            self.base_raw_fed_emb_output = task_network(fed_embedding,
+                                                        self.processed_input)
+
+            self.meta_class_raw_output = task_network(self.meta_class_combined_emb,
+                                                      meta_input_embeddings)
+
+            self.meta_map_output = task_network(self.meta_map_combined_emb,
+                                                 meta_input_embeddings) 
+
+            self.meta_map_fed_emb_output = task_network(fed_embedding,
+                                                        meta_input_embeddings) 
+            self.base_cached_emb_raw_output = task_network(
+                self.lookup_cached_emb, self.processed_input)
+            self.base_cached_unstopped_emb_raw_output = task_network(
+                self.lookup_cached_unstopped_emb, self.processed_input)
+            if self.separate_targ_net:
+                self.base_cached_emb_raw_output_tn = task_network(
+                    self.lookup_cached_emb_tn, self.processed_input_tn)
+            self.meta_cached_emb_raw_output = task_network(
+                self.lookup_cached_emb, meta_input_embeddings)
+            if self.run_config["train_language_base"]:
+                self.base_lang_raw_output = task_network(self.language_function_embedding,
+                                                         self.processed_input)
+                if self.separate_targ_net:
+                    self.base_lang_raw_output_tn = task_network(self.language_function_embedding_tn,
+                                                                self.processed_input_tn)
+            if self.run_config["train_language_meta"]:
+                self.meta_map_lang_output = task_network(self.language_function_embedding,
+                                                         meta_input_embeddings) 
+        else: 
+            # hyper-network-parameterized rather than fixed + task conditioned
+            # (this is the default)
+            def task_network(task_params, processed_input):
+                hweights, hbiases = task_params
+                task_hidden = processed_input
+                for i in range(num_task_hidden_layers):
+                    task_hidden = internal_nonlinearity(
+                        tf.matmul(task_hidden, hweights[i]) + hbiases[i])
+
+                raw_output = tf.matmul(task_hidden, hweights[-1]) + hbiases[-1]
+
+                return raw_output
+
+            self.base_raw_output = task_network(self.base_task_params,
+                                                 self.processed_input)
+            if self.separate_targ_net:
+                self.base_raw_output_tn = task_network(self.base_task_params_tn,
+                                                        self.processed_input_tn)
+
+            self.base_raw_fed_emb_output = task_network(self.fed_emb_task_params,
+                                                         self.processed_input)
+
+            self.meta_class_raw_output = task_network(self.meta_class_task_params,
+                                                       meta_input_embeddings)
+
+            self.meta_map_output = task_network(self.meta_map_task_params,
+                                                 meta_input_embeddings) 
+
+            self.meta_map_fed_emb_output = task_network(self.fed_emb_task_params,
+                                                         meta_input_embeddings) 
+            self.base_cached_emb_raw_output = task_network(
+                self.cached_emb_task_params, self.processed_input)
+            self.base_cached_unstopped_emb_raw_output = task_network(
+                self.cached_unstopped_emb_task_params, self.processed_input)
+            if self.separate_targ_net:
+                self.base_cached_emb_raw_output_tn = task_network(
+                    self.cached_emb_task_params_tn, self.processed_input_tn)
+            self.meta_cached_emb_raw_output = task_network(
+                self.cached_emb_task_params, meta_input_embeddings)
+            if self.run_config["train_language_base"]:
+                self.base_lang_raw_output = task_network(self.lang_task_params,
+                                                          self.processed_input)
+                if self.separate_targ_net:
+                    self.base_lang_raw_output_tn = task_network(self.lang_task_params_tn,
+                                                                 self.processed_input_tn)
+            if self.run_config["train_language_meta"]:
+                self.meta_map_lang_output = task_network(self.lang_task_params,
+                                                          meta_input_embeddings) 
+
         self.base_output = output_processor(self.base_raw_output)
         if self.separate_targ_net:
-            self.base_raw_output_tn = _task_network(self.base_task_params_tn,
-                                                    self.processed_input_tn)
             self.base_output_tn = output_processor_tn(self.base_raw_output_tn)
 
-        self.base_raw_fed_emb_output = _task_network(self.fed_emb_task_params,
-                                                     self.processed_input)
         self.base_fed_emb_output = output_processor(
             self.base_raw_fed_emb_output)
 
-        self.meta_class_raw_output = _task_network(self.meta_class_task_params,
-                                                   meta_input_embeddings)
         if meta_class_processor_var is not None:
             self.meta_class_output_logits = tf.matmul(
                 self.meta_class_raw_output, meta_class_processor_var)
@@ -830,28 +917,14 @@ class HoMM_model(object):
             
         self.meta_class_output = tf.nn.sigmoid(self.meta_class_output_logits)
 
-        self.meta_map_output = _task_network(self.meta_map_task_params,
-                                             meta_input_embeddings) 
 
-        self.meta_map_fed_emb_output = _task_network(self.fed_emb_task_params,
-                                                     meta_input_embeddings) 
-
-        self.base_cached_emb_raw_output = _task_network(
-            self.cached_emb_task_params, self.processed_input)
         self.base_cached_emb_output = output_processor(
             self.base_cached_emb_raw_output)
-        self.base_cached_unstopped_emb_raw_output = _task_network(
-            self.cached_unstopped_emb_task_params, self.processed_input)
         self.base_cached_unstopped_emb_output = output_processor(
             self.base_cached_unstopped_emb_raw_output)
         if self.separate_targ_net:
-            self.base_cached_emb_raw_output_tn = _task_network(
-                self.cached_emb_task_params_tn, self.processed_input_tn)
             self.base_cached_emb_output_tn = output_processor_tn(
                 self.base_cached_emb_raw_output_tn)
-
-        self.meta_cached_emb_raw_output = _task_network(
-            self.cached_emb_task_params, meta_input_embeddings)
 
         if meta_class_processor_var is not None:
             self.meta_class_cached_emb_output_logits = tf.matmul(
@@ -861,18 +934,12 @@ class HoMM_model(object):
                 self.meta_cached_emb_raw_output, reuse=True)
 
         if self.run_config["train_language_base"]:
-            self.base_lang_raw_output = _task_network(self.lang_task_params,
-                                                      self.processed_input)
             self.base_lang_output = output_processor(self.base_lang_raw_output)
 
             if self.separate_targ_net:
-                self.base_lang_raw_output_tn = _task_network(self.lang_task_params_tn,
-                                                             self.processed_input_tn)
                 self.base_lang_output_tn = output_processor_tn(self.base_lang_raw_output_tn)
 
         if self.run_config["train_language_meta"]:
-            self.meta_map_lang_output = _task_network(self.lang_task_params,
-                                                      meta_input_embeddings) 
             if meta_class_processor_var is not None:
                 self.meta_class_lang_output_logits = tf.matmul(
                     self.meta_map_lang_output, meta_class_processor_var)

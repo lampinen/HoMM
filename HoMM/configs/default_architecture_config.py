@@ -38,6 +38,11 @@ default_architecture_config = {
                                  # Use "standard" for the basic weight-norm
                                  # approach.
 
+   "task_conditioned_not_hyper": False,  # Control where task net is fixed, but
+                                         # receives task rep as an additional
+                                         # input, rather than standard HyperNet
+                                         # based setup.
+
    "internal_nonlinearity": tf.nn.leaky_relu,  # nonlinearity for hidden layers
                                                # -- note that output to Z is
                                                # linear by default
