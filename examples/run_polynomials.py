@@ -75,7 +75,12 @@ class poly_HoMM_model(HoMM_model.HoMM_model):
 
         # add the base tasks implied by the mappings
         self.base_train_tasks += implied_tasks_train_tasks
-        self.base_eval_tasks += implied_tasks_eval_tasks
+
+        # in general, we want evaluation to be of ability to metamap a trained
+        # task to a held-out one, so we move the meta-mapping eval sources to
+        # train, and use the implied tasks as eval
+        self.base_train_tasks += self.base_eval_tasks 
+        self.base_eval_tasks = implied_tasks_eval_tasks
 
     def fill_buffers(self, num_data_points=1):
         """Add new "experiences" to memory buffers."""
