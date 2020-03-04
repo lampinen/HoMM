@@ -843,13 +843,13 @@ class HoMM_model(object):
             self.meta_cached_emb_raw_output = task_network(
                 self.lookup_cached_emb, meta_input_embeddings)
             if self.run_config["train_language_base"]:
-                self.base_lang_raw_output = task_network(self.language_function_embedding,
+                self.base_lang_raw_output = task_network(self.language_function_emb,
                                                          self.processed_input)
                 if self.separate_targ_net:
-                    self.base_lang_raw_output_tn = task_network(self.language_function_embedding_tn,
+                    self.base_lang_raw_output_tn = task_network(self.language_function_emb_tn,
                                                                 self.processed_input_tn)
             if self.run_config["train_language_meta"]:
-                self.meta_map_lang_output = task_network(self.language_function_embedding,
+                self.meta_map_lang_output = task_network(self.language_function_emb,
                                                          meta_input_embeddings) 
         else: 
             # hyper-network-parameterized rather than fixed + task conditioned
