@@ -1040,6 +1040,8 @@ class HoMM_model(object):
             optimizer = tf.train.AdamOptimizer(self.lr_ph)
         elif architecture_config["optimizer"] == "RMSProp":
             optimizer = tf.train.RMSPropOptimizer(self.lr_ph)
+        elif architecture_config["optimizer"] == "SGD":
+            optimizer = tf.train.GradientDescentOptimizer(self.lr_ph)
         else:
             raise ValueError("Unknown optimizer: %s" % architecture_config["optimizer"])
 
