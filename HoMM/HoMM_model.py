@@ -1717,10 +1717,16 @@ class HoMM_model(object):
         for meta_mapping in self.meta_map_eval_tasks + self.meta_map_train_tasks:
             meta_dataset = self.meta_datasets[meta_mapping]["eval"]
 
-            feed_dict = self.build_feed_dict(meta_mapping,
-                                             call_type="metamap_cached_eval")
-            result_embeddings = self.sess.run(self.meta_map_output,
-                                              feed_dict=feed_dict)
+            if self.run_config["train_language_meta"]:
+                feed_dict = self.build_feed_dict(meta_mapping,
+                                                 call_type="metamap_lang_eval")
+                result_embeddings = self.sess.run(self.meta_map_lang_output,
+                                                  feed_dict=feed_dict)
+            else:
+                feed_dict = self.build_feed_dict(meta_mapping,
+                                                 call_type="metamap_cached_eval")
+                result_embeddings = self.sess.run(self.meta_map_output,
+                                                  feed_dict=feed_dict)
 
             i = len(self.meta_pairings[meta_mapping]["train"])
             for (task, other) in self.meta_pairings[meta_mapping]["eval"]:
@@ -1847,13 +1853,14 @@ class HoMM_model(object):
                 _do_eval(epoch=epoch)
 
         # from meta-learning guess
-        self.update_base_task_embeddings()
-        opt_filename = self.filename_prefix + "meta_learning_opt_losses.csv"
+        if self.run_config["train_base"]:
+            self.update_base_task_embeddings()
+            opt_filename = self.filename_prefix + "meta_learning_opt_losses.csv"
 
-        _do_eval(epoch=0)
-        for epoch in range(1, num_optimization_epochs+1):
-            for task in self.base_eval_tasks:
-                self.base_optimization_step(task, optimization_rate)
+            _do_eval(epoch=0)
+            for epoch in range(1, num_optimization_epochs+1):
+                for task in self.base_eval_tasks:
+                    self.base_optimization_step(task, optimization_rate)
 
-            if epoch % eval_every == 0:
-                _do_eval(epoch=epoch)
+                if epoch % eval_every == 0:
+                    _do_eval(epoch=epoch)
