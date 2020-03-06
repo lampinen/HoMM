@@ -1681,6 +1681,27 @@ class HoMM_model(object):
         feed_dict = self.build_feed_dict(task, lr=lr, call_type="base_cached_train")
         self.sess.run(self.optimize_cached_op, feed_dict=feed_dict)
 
+    def save_task_embeddings(self, filename):
+        """Saves task and meta embeddings (only for trained)."""
+        with open(filename, "w") as fout:
+
+            indices = [self.task_indices[str(x)] for x in self.base_train_tasks + self.meta_class_train_tasks + self.meta_map_train_tasks]  
+            names = [str(x) + ":" + t  for (x, t) in zip(
+                self.base_train_tasks + self.meta_class_train_tasks + self.meta_map_train_tasks,
+                ["base"]*len(self.base_train_tasks) + ["meta_class"] * len(self.meta_class_train_tasks) + ["meta_map"] * len(self.meta_map_train_tasks))]  
+
+            fout.write(", ".join(["dimension"] + names) + "\n")
+            vals = self.sess.run(
+                self.lookup_cached_emb, 
+                feed_dict={self.task_index_ph: np.array(indices, 
+                                                        dtype=np.int32)})
+
+            format_str = ", ".join(["%f"] * len(names))
+
+            for i in range(vals.shape[-1]):
+                fout.write("%i, " % i + format_str % tuple(vals[:, i]) + "\n")
+
+
     def guess_embeddings_and_optimize(self, num_optimization_epochs=1000,
                                       eval_every=50, optimization_rate=1e-4,
                                       random_init_scale=1.):
