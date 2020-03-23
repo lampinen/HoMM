@@ -11,7 +11,7 @@ import polynomials
 
 run_config = default_run_config.default_run_config
 run_config.update({
-    "output_dir": "polynomials_results/",
+    "output_dir": "/data2/lampinen/polynomials_results/",
     
     "num_base_train_tasks": 60, # prior to meta-augmentation
     "num_base_eval_tasks": 40, # prior to meta-augmentation
@@ -25,9 +25,18 @@ run_config.update({
     "meta_mult_vals": [-3, -1, 3],
     "new_meta_tasks": [],
     "new_meta_mappings": ["add_%f" % 2., "add_%f" % -2., "mult_%f" % 2., "mult_%f" % -2.],
+
+    "run_offset": 2,
+    "num_runs": 3,
+    
+    "num_epochs": 5000,
 })
 
 architecture_config = default_architecture_config.default_architecture_config
+
+architecture_config.update({
+    "task_conditioned_not_hyper": False,
+})
 
 
 class poly_HoMM_model(HoMM_model.HoMM_model):
@@ -117,7 +126,7 @@ class poly_HoMM_model(HoMM_model.HoMM_model):
 
 
 ## running stuff
-for run_i in range(run_config["num_runs"]):
+for run_i in range(run_config["run_offset"], run_config["run_offset"] + run_config["num_runs"]):
     np.random.seed(run_i)
     tf.set_random_seed(run_i)
     run_config["this_run"] = run_i

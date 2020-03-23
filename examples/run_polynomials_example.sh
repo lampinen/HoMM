@@ -1,4 +1,4 @@
 #!/bin/bash
 export PYTHONPATH=${PYTHONPATH}:$(dirname `pwd`)
-python run_polynomials.py 
+python3.6 run_polynomials.py 
 
