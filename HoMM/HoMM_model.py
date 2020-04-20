@@ -426,10 +426,22 @@ class HoMM_model(object):
         self.guess_input_mask_ph = tf.placeholder(tf.bool, shape=[None]) # which datapoints get excluded from the guess
         self.meta_batch_size = architecture_config["meta_batch_size"]  # this is used for generating guess masks
 
+        if architecture_config["nonhomoiconic"]:  # separate M + H for base and meta 
+            meta_MH_network_scope = "metalevel/"
+            meta_MH_network_reuse = False
+            if self.run_config["train_language"]:
+                raise NotImplementedError("Non-homoiconic language-based architectures have not been implemented -- it would require some thought about definitions to figure out whether the language net should still be shared or not.")
+            if architecture_config["task_conditioned_not_hyper"]:
+                raise NotImplementedError("Non-homoiconic non-hyper architectures have not been implemented.")
+        else:
+            meta_MH_network_scope = ""
+            meta_MH_network_reuse = True
+
         def meta_network(embedded_inputs, embedded_targets,
-                          guess_mask=self.guess_input_mask_ph, reuse=True):
+                         guess_mask=self.guess_input_mask_ph, 
+                         outer_scope="", reuse=True):
             num_hidden_meta = architecture_config["M_num_hidden"]
-            with tf.variable_scope('meta', reuse=reuse):
+            with tf.variable_scope(outer_scope + 'meta', reuse=reuse):
                 meta_input = tf.concat([embedded_inputs,
                                         embedded_targets], axis=-1)
                 meta_input = tf.boolean_mask(meta_input,
@@ -598,8 +610,8 @@ class HoMM_model(object):
 
         if architecture_config["persistent_task_reps"]:
             def get_combined_embedding_and_match_loss(guess_embedding, task_index,
-                                                       guess_weight,
-                                                       target_net=False):
+                                                      guess_weight,
+                                                      target_net=False):
                 cached_embedding = get_persistent_embeddings(
                     task_index, target_net=target_net)
                 if guess_weight == "varied":
@@ -630,9 +642,13 @@ class HoMM_model(object):
         self.meta_target_embeddings = meta_target_embeddings 
 
         self.meta_class_guess_emb = meta_network(meta_input_embeddings,
-                                                  processed_class)
+                                                 processed_class,
+                                                 outer_scope=meta_MH_network_scope,
+                                                 reuse=meta_MH_network_reuse)
         self.meta_map_guess_emb = meta_network(meta_input_embeddings,
-                                                meta_target_embeddings)
+                                               meta_target_embeddings,
+                                               outer_scope=meta_MH_network_scope,
+                                               reuse=True)
 
 
         if architecture_config["persistent_task_reps"]:
@@ -687,8 +703,8 @@ class HoMM_model(object):
         task_weight_gen_init = tf.random_uniform_initializer(-tw_range,
                                                              tw_range)
 
-        def hyper_network(function_embedding, reuse=True):
-            with tf.variable_scope('hyper', reuse=reuse):
+        def hyper_network(function_embedding, outer_scope="", reuse=True):
+            with tf.variable_scope(outer_scope + 'hyper', reuse=reuse):
                 hyper_hidden = function_embedding
                 for _ in range(architecture_config["H_num_hidden_layers"]):
                     hyper_hidden = slim.fully_connected(hyper_hidden, num_hidden_hyper,
@@ -773,14 +789,18 @@ class HoMM_model(object):
 
         if not self.architecture_config["task_conditioned_not_hyper"]:  
             self.base_task_params = hyper_network(self.base_combined_emb,
-                                                   reuse=False)
+                                                  reuse=False)
             if self.separate_targ_net:
                 with tf.variable_scope("target_net", reuse=False):
                     self.base_task_params_tn = hyper_network(self.base_combined_emb_tn,
                                                            reuse=False)
 
-            self.meta_map_task_params = hyper_network(self.meta_map_combined_emb)
-            self.meta_class_task_params = hyper_network(self.meta_class_combined_emb)
+            self.meta_map_task_params = hyper_network(self.meta_map_combined_emb,
+                                                      outer_scope=meta_MH_network_scope,
+                                                      reuse=meta_MH_network_reuse)
+            self.meta_class_task_params = hyper_network(self.meta_class_combined_emb,
+                                                        outer_scope=meta_MH_network_scope,
+                                                        reuse=True)
 
             if self.run_config["train_language"]:
                 self.lang_task_params = hyper_network(self.language_function_emb)
@@ -794,6 +814,10 @@ class HoMM_model(object):
             if self.separate_targ_net:
                 with tf.variable_scope("target_net", reuse=True):
                     self.cached_emb_task_params_tn = hyper_network(self.lookup_cached_emb_tn, reuse=True)
+
+            if architecture_config["nonhomoiconic"]:
+                self.cached_emb_meta_task_params = hyper_network(self.lookup_cached_emb,
+                                                                 outer_scope=meta_MH_network_scope)
 
         ## task network F: Z -> Z
 
@@ -889,8 +913,12 @@ class HoMM_model(object):
             if self.separate_targ_net:
                 self.base_cached_emb_raw_output_tn = task_network(
                     self.cached_emb_task_params_tn, self.processed_input_tn)
-            self.meta_cached_emb_raw_output = task_network(
-                self.cached_emb_task_params, meta_input_embeddings)
+            if architecture_config["nonhomoiconic"]:
+                self.meta_cached_emb_raw_output = task_network(
+                    self.cached_emb_meta_task_params, meta_input_embeddings)
+            else:
+                self.meta_cached_emb_raw_output = task_network(
+                    self.cached_emb_task_params, meta_input_embeddings)
             if self.run_config["train_language_base"]:
                 self.base_lang_raw_output = task_network(self.lang_task_params,
                                                           self.processed_input)
@@ -899,7 +927,7 @@ class HoMM_model(object):
                                                                  self.processed_input_tn)
             if self.run_config["train_language_meta"]:
                 self.meta_map_lang_output = task_network(self.lang_task_params,
-                                                          meta_input_embeddings) 
+                                                         meta_input_embeddings) 
 
         self.base_output = output_processor(self.base_raw_output)
         if self.separate_targ_net:

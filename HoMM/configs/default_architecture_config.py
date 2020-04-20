@@ -13,6 +13,8 @@ default_architecture_config = {
 
    "z_dim": 512,  # latent dimensionality
 
+   "nonhomoiconic": False,  # if true, will have separate M + H for basic and meta
+
    "M_num_hidden_layers": 3,  # meta-network hidden layers
    "M_num_hidden": 512,  # meta-network hidden units
    "M_max_pool": True,  # if False, average pools.
