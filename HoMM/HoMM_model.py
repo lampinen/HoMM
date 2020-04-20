@@ -426,6 +426,9 @@ class HoMM_model(object):
         self.guess_input_mask_ph = tf.placeholder(tf.bool, shape=[None]) # which datapoints get excluded from the guess
         self.meta_batch_size = architecture_config["meta_batch_size"]  # this is used for generating guess masks
 
+        if architecture_config["nonhomoiconic"]:
+            raise NotImplementedError("Nonhomoiconic networks are not implemented in master (check out the nonhomoiconic branch).")
+
         def meta_network(embedded_inputs, embedded_targets,
                           guess_mask=self.guess_input_mask_ph, reuse=True):
             num_hidden_meta = architecture_config["M_num_hidden"]
