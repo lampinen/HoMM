@@ -1704,6 +1704,47 @@ class HoMM_model(object):
             for i in range(vals.shape[-1]):
                 fout.write("%i, " % i + format_str % tuple(vals[:, i]) + "\n")
 
+    def save_metamapped_task_embeddings(self, filename_prefix):
+        """Saves result embeddings after meta-mapping (only for trained)."""
+
+        for these_meta_mappings, train_or_eval in zip([self.meta_map_train_tasks,
+						       self.meta_map_eval_tasks],
+						      ["train", "eval"]):
+            for meta_mapping in these_meta_mappings:
+
+                filename = filename_prefix + "_mapped-{}.csv".format(meta_mapping)
+                with open(filename, "w") as fout:
+
+                    indices = [self.task_indices[str(x)] for x in self.base_train_tasks]  
+                    names = [str(x) + ":base"  for x in self.base_train_tasks]
+                    fout.write(", ".join(["dimension"] + names) + "\n")
+                    feed_dict = self.build_feed_dict(meta_mapping,
+                                                     call_type="metamap_cached_eval")
+
+                    # update feed dict to output for *all* base tasks
+                    num_cues = np.sum(feed_dict[self.guess_input_mask_ph])
+                    feed_dict[self.meta_input_indices_ph] = np.concatenate([ 
+                        feed_dict[self.meta_input_indices_ph][:num_cues],
+                        np.array(indices)], axis=0)
+                    feed_dict[self.meta_target_indices_ph] = np.concatenate([ 
+                        feed_dict[self.meta_input_indices_ph][:num_cues],
+                        [0] * len(indices)], axis=0)  # will be masked
+                    feed_dict[self.guess_input_mask_ph] = np.array(
+                        [True] * (num_cues) + [False] * (len(indices)), dtype=np.bool)
+                    result_embeddings = self.sess.run(self.meta_map_output,
+                                                      feed_dict=feed_dict)
+                    vals = result_embeddings[num_cues:, :]
+                    print(vals)
+
+#                    vals = self.sess.run(
+#                        self.lookup_cached_emb, 
+#                        feed_dict={self.task_index_ph: np.array(indices, 
+#                                                                dtype=np.int32)})
+
+                    format_str = ", ".join(["%f"] * len(names))
+
+                    for i in range(vals.shape[-1]):
+                        fout.write("%i, " % i + format_str % tuple(vals[:, i]) + "\n")
 
     def guess_embeddings_and_optimize(self, num_optimization_epochs=1000,
                                       eval_every=50, optimization_rate=1e-4,
