@@ -1706,6 +1706,7 @@ class HoMM_model(object):
 
     def save_metamapped_task_embeddings(self, filename_prefix):
         """Saves result embeddings after meta-mapping (only for trained)."""
+        self.update_meta_task_embeddings()
 
         for these_meta_mappings, train_or_eval in zip([self.meta_map_train_tasks,
 						       self.meta_map_eval_tasks],
@@ -1731,15 +1732,10 @@ class HoMM_model(object):
                         [0] * len(indices)], axis=0)  # will be masked
                     feed_dict[self.guess_input_mask_ph] = np.array(
                         [True] * (num_cues) + [False] * (len(indices)), dtype=np.bool)
-                    result_embeddings = self.sess.run(self.meta_map_output,
+                    result_embeddings = self.sess.run(self.meta_cached_emb_raw_output,
                                                       feed_dict=feed_dict)
                     vals = result_embeddings[num_cues:, :]
                     print(vals)
-
-#                    vals = self.sess.run(
-#                        self.lookup_cached_emb, 
-#                        feed_dict={self.task_index_ph: np.array(indices, 
-#                                                                dtype=np.int32)})
 
                     format_str = ", ".join(["%f"] * len(names))
 
