@@ -1594,7 +1594,7 @@ class HoMM_model(object):
     def run_varied_meta_batch_eval(self, meta_batch_sizes=None):
         original_mbs = self.meta_batch_size
         if meta_batch_sizes is None:
-            meta_batch_sizes = [2**i for i in range(int(np.floor(np.log2(original_mbs))))]  + [original_mbs] 
+            meta_batch_sizes = [2**i for i in range(int(np.ceil(np.log2(original_mbs))))]  + [original_mbs] 
 
         train_meta = self.run_config["train_meta"]
         train_base = self.run_config["train_base"]
