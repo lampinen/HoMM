@@ -1518,6 +1518,16 @@ class HoMM_model(object):
     def restore_parameters(self, filename):
         self.saver.restore(self.sess, filename)
 
+    def save_meta_pairings(self):
+        meta_pairing_filename = self.filename_prefix + "meta_pairings.csv"
+        with open(meta_pairing_filename, "w") as fout:
+            fout.write("meta_mapping, meta_toe, base_toe, input, target\n")
+            for mm, meta_toe in zip(self.meta_map_train_tasks + self.meta_map_eval_tasks,
+                                    ["train"] * len(self.meta_map_train_tasks) + ["eval"] * len(self.meta_map_eval_tasks)):
+                for base_toe in ["train", "eval"]:
+                    for in_task, out_task in self.meta_pairings[mm][base_toe]:
+                        fout.write("{}, {}, {}, {}, {}\n".format(mm, meta_toe, base_toe, in_task, out_task))
+
     def run_eval(self, epoch, print_losses=True):
         train_meta = self.run_config["train_meta"]
         train_base = self.run_config["train_base"]
