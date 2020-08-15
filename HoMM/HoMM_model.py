@@ -1758,14 +1758,17 @@ class HoMM_model(object):
         feed_dict = self.build_feed_dict(task, lr=lr, call_type="base_cached_train")
         self.sess.run(self.optimize_cached_op, feed_dict=feed_dict)
 
-    def save_task_embeddings(self, filename):
-        """Saves task and meta embeddings (only for trained)."""
+    def save_task_embeddings(self, filename, save_eval=True):
+        """Saves task and meta embeddings (only for trained unless save_eval)."""
         with open(filename, "w") as fout:
 
             indices = [self.task_indices[str(x)] for x in self.base_train_tasks + self.meta_class_train_tasks + self.meta_map_train_tasks]  
             names = [str(x) + ":" + t  for (x, t) in zip(
                 self.base_train_tasks + self.meta_class_train_tasks + self.meta_map_train_tasks,
-                ["base"]*len(self.base_train_tasks) + ["meta_class"] * len(self.meta_class_train_tasks) + ["meta_map"] * len(self.meta_map_train_tasks))]  
+                ["base_train"]*len(self.base_train_tasks) + ["meta_class"] * len(self.meta_class_train_tasks) + ["meta_map"] * len(self.meta_map_train_tasks))]  
+            if save_eval:
+                indices += [self.task_indices[str(x)] for x in self.base_eval_tasks]  
+                names += [str(x) + ":base_eval" for x in self.base_eval_tasks]
 
             fout.write(", ".join(["dimension"] + names) + "\n")
             vals = self.sess.run(
