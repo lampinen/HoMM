@@ -43,6 +43,7 @@ default_architecture_config = {
                                          # receives task rep as an additional
                                          # input, rather than standard HyperNet
                                          # based setup.
+   "nonhomoiconic": False,  # non-homoiconic control
 
    "internal_nonlinearity": tf.nn.leaky_relu,  # nonlinearity for hidden layers
                                                # -- note that output to Z is

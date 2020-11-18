@@ -832,7 +832,7 @@ class HoMM_model(object):
                 with tf.variable_scope('task_net', reuse=reuse):
                     task_reps = tf.tile(task_rep, [tf.shape(processed_input)[0], 1])
                     task_hidden = tf.concat([task_reps, processed_input],
-					    axis=-1)
+                                            axis=-1)
                     for _ in range(architecture_config["F_num_hidden_layers"]):
                         task_hidden = slim.fully_connected(task_hidden, num_hidden_F,
                                                            activation_fn=internal_nonlinearity)
@@ -1311,9 +1311,13 @@ class HoMM_model(object):
         res = self.sess.run(fetches, feed_dict=feed_dict)
         return res
 
-    def get_base_guess_embedding(self, task):
+    def get_base_guess_embedding(self, task, train_embedding=False):
         """Get base-task embedding from examples."""
-        feed_dict = self.build_feed_dict(task, call_type="base_standard_eval")
+        if train_embedding:  # used for varying mbs
+            call_type = "base_standard_train"
+        else:
+            call_type = "base_standard_eval"
+        feed_dict = self.build_feed_dict(task, call_type=call_type)
         res = self.sess.run(self.base_guess_emb, feed_dict=feed_dict)
         return res
 
@@ -1393,11 +1397,14 @@ class HoMM_model(object):
 
         return names, losses
 
-    def get_meta_guess_embedding(self, meta_task, meta_class):
+    def get_meta_guess_embedding(self, meta_task, meta_class,
+                                 train_embedding=False):
         """Get meta-mapping embedding from examples of mapping.
         
         Note: cached base embeddings must be up to date!"""
         call_type = "metaclass_standard_eval" if meta_class else "metamap_standard_eval"
+        if train_embedding:  # used for varying mbs size
+            call_type = call_type[:-4] + "train"
         feed_dict = self.build_feed_dict(meta_task, call_type=call_type)
         if meta_class:
             fetch = self.meta_class_guess_emb 
@@ -1411,7 +1418,7 @@ class HoMM_model(object):
 
         feed_dict = self.build_feed_dict(meta_mapping,
                                          call_type="metamap_cached_eval")
-        result_embeddings = self.sess.run(self.meta_map_output,
+        result_embeddings = self.sess.run(self.meta_cached_emb_raw_output,
                                           feed_dict=feed_dict) 
 
         names = []
@@ -1508,7 +1515,7 @@ class HoMM_model(object):
         feed_dict = self.build_feed_dict(meta_task, lr=meta_lr, call_type="metamap_lang_train")
         self.sess.run(self.meta_map_lang_train_op, feed_dict=feed_dict)
 
-    def update_base_task_embeddings(self):
+    def update_base_task_embeddings(self, train_embedding=False):
         """Updates cached embeddings (for use if embeddings are not persistent)"""
         if self.architecture_config["persistent_task_reps"]:
             warnings.warn("Overwriting persistent embeddings... Is this "
@@ -1519,7 +1526,7 @@ class HoMM_model(object):
         update_values = []
         for task in self.base_train_tasks + self.base_eval_tasks:
             if train_base:
-                task_emb = self.get_base_guess_embedding(task)
+                task_emb = self.get_base_guess_embedding(task, train_embedding=train_embedding)
             elif train_lang_base:  # if training language base only, generate these embeddings from language instead
                 task_emb = self.get_language_embedding(task)
             _, _, task_index = self.base_task_lookup(task)
@@ -1533,7 +1540,7 @@ class HoMM_model(object):
                 self.update_persistent_embeddings_ph: update_values
             })
 
-    def update_meta_task_embeddings(self):
+    def update_meta_task_embeddings(self, train_embedding=False):
         """Updates cached meta-mapping embeddings."""
         if self.architecture_config["persistent_task_reps"]:
             warnings.warn("Overwriting persistent embeddings... Is this "
@@ -1545,7 +1552,8 @@ class HoMM_model(object):
                                             self.meta_map_train_tasks + self.meta_map_eval_tasks],
                                            [True, False]):
             for task in these_tasks:
-                task_emb = self.get_meta_guess_embedding(task, meta_class)
+                task_emb = self.get_meta_guess_embedding(
+                    task, meta_class, train_embedding=train_embedding)
                 _, _, task_index = self.meta_task_lookup(task)
                 update_inds.append(task_index)
                 update_values.append(task_emb[0])
@@ -1562,6 +1570,16 @@ class HoMM_model(object):
 
     def restore_parameters(self, filename):
         self.saver.restore(self.sess, filename)
+
+    def save_meta_pairings(self):
+        meta_pairing_filename = self.filename_prefix + "meta_pairings.csv"
+        with open(meta_pairing_filename, "w") as fout:
+            fout.write("meta_mapping, meta_toe, base_toe, input, target\n")
+            for mm, meta_toe in zip(self.meta_map_train_tasks + self.meta_map_eval_tasks,
+                                    ["train"] * len(self.meta_map_train_tasks) + ["eval"] * len(self.meta_map_eval_tasks)):
+                for base_toe in ["train", "eval"]:
+                    for in_task, out_task in self.meta_pairings[mm][base_toe]:
+                        fout.write("{}, {}, {}, {}, {}\n".format(mm, meta_toe, base_toe, in_task, out_task))
 
     def run_eval(self, epoch, print_losses=True):
         """Runs all evaluations (both base and meta)."""
@@ -1637,6 +1655,62 @@ class HoMM_model(object):
             if print_losses and not train_base:
                 print(formatted_losses)
 
+    def run_varied_meta_batch_eval(self, meta_batch_sizes=None):
+        original_mbs = self.meta_batch_size
+        if meta_batch_sizes is None:
+            meta_batch_sizes = [2**i for i in range(int(np.ceil(np.log2(original_mbs))))]  + [original_mbs] 
+
+        train_meta = self.run_config["train_meta"]
+        train_base = self.run_config["train_base"]
+
+        self.run_config["varied_mbs_loss_filename"] = self.filename_prefix + "varied_mbs_losses.csv"
+        self.run_config["varied_mbs_meta_filename"] = self.filename_prefix + "varied_mbs_meta_true_losses.csv"
+        
+        for mbs in meta_batch_sizes:
+            self.meta_batch_size = mbs
+            mbs_s = "{}, ".format(mbs)
+
+            if train_meta:
+                self.update_meta_task_embeddings(train_embedding=True)
+                meta_names, meta_losses = self.run_meta_loss_eval()
+                meta_true_names, meta_true_losses = self.run_meta_true_eval()
+
+                if mbs == 1:
+                    vmbs_meta_true_loss_format = ", ".join(["%f" for _ in meta_true_names]) + "\n"
+                    with open(self.run_config["varied_mbs_meta_filename"], "w") as fout:
+                        fout.write("meta_batch_size, " + ", ".join(meta_true_names) + "\n")
+
+
+                with open(self.run_config["varied_mbs_meta_filename"], "a") as fout:
+                    formatted_losses = mbs_s + (vmbs_meta_true_loss_format % tuple(
+                        meta_true_losses))
+                    fout.write(formatted_losses)
+            else:
+                meta_names, meta_losses = [], []
+
+        for mbs in meta_batch_sizes:
+            self.meta_batch_size = mbs
+            mbs_s = "{}, ".format(mbs)
+
+            if train_base:
+                self.update_base_task_embeddings(train_embedding=True)
+                base_names, base_losses = self.run_base_eval()
+                if mbs == 1:
+                    # set up format string
+                    vmbs_loss_format = ", ".join(["%f" for _ in base_names + meta_names]) + "\n"
+
+                    # write headers and overwrite existing file 
+                    with open(self.run_config["varied_mbs_loss_filename"], "w") as fout:
+                        fout.write("meta_batch_size, " + ", ".join(base_names + meta_names) + "\n")
+                with open(self.run_config["varied_mbs_loss_filename"], "a") as fout:
+                    formatted_losses = mbs_s + (vmbs_loss_format % tuple(
+                        base_losses + meta_losses))
+                    fout.write(formatted_losses)
+
+                print(formatted_losses)
+
+        self.meta_batch_size = original_mbs
+        
     def end_epoch_calls(self, epoch): 
         """Can be overridden to anneal things like exploration over learning."""
         pass
@@ -1741,14 +1815,17 @@ class HoMM_model(object):
         feed_dict = self.build_feed_dict(task, lr=lr, call_type="base_cached_train")
         self.sess.run(self.optimize_cached_op, feed_dict=feed_dict)
 
-    def save_task_embeddings(self, filename):
-        """Saves task and meta embeddings (only for trained tasks)."""
+    def save_task_embeddings(self, filename, save_eval=True):
+        """Saves task and meta embeddings (only for trained unless save_eval)."""
         with open(filename, "w") as fout:
 
             indices = [self.task_indices[str(x)] for x in self.base_train_tasks + self.meta_class_train_tasks + self.meta_map_train_tasks]  
             names = [str(x) + ":" + t  for (x, t) in zip(
                 self.base_train_tasks + self.meta_class_train_tasks + self.meta_map_train_tasks,
-                ["base"]*len(self.base_train_tasks) + ["meta_class"] * len(self.meta_class_train_tasks) + ["meta_map"] * len(self.meta_map_train_tasks))]  
+                ["base_train"]*len(self.base_train_tasks) + ["meta_class"] * len(self.meta_class_train_tasks) + ["meta_map"] * len(self.meta_map_train_tasks))]  
+            if save_eval:
+                indices += [self.task_indices[str(x)] for x in self.base_eval_tasks]  
+                names += [str(x) + ":base_eval" for x in self.base_eval_tasks]
 
             fout.write(", ".join(["dimension"] + names) + "\n")
             vals = self.sess.run(
@@ -1761,6 +1838,43 @@ class HoMM_model(object):
             for i in range(vals.shape[-1]):
                 fout.write("%i, " % i + format_str % tuple(vals[:, i]) + "\n")
 
+    def save_metamapped_task_embeddings(self, filename_prefix):
+        """Saves result embeddings after meta-mapping (only for trained)."""
+        self.update_meta_task_embeddings()
+
+        for these_meta_mappings, train_or_eval in zip([self.meta_map_train_tasks,
+                                                       self.meta_map_eval_tasks],
+                                                      ["train", "eval"]):
+            for meta_mapping in these_meta_mappings:
+
+                filename = filename_prefix + "_mapped-{}.csv".format(meta_mapping)
+                with open(filename, "w") as fout:
+
+                    indices = [self.task_indices[str(x)] for x in self.base_train_tasks]  
+                    names = [str(x) + ":base"  for x in self.base_train_tasks]
+                    fout.write(", ".join(["dimension"] + names) + "\n")
+                    feed_dict = self.build_feed_dict(meta_mapping,
+                                                     call_type="metamap_cached_eval")
+
+                    # update feed dict to output for *all* base tasks
+                    num_cues = np.sum(feed_dict[self.guess_input_mask_ph])
+                    feed_dict[self.meta_input_indices_ph] = np.concatenate([ 
+                        feed_dict[self.meta_input_indices_ph][:num_cues],
+                        np.array(indices)], axis=0)
+                    feed_dict[self.meta_target_indices_ph] = np.concatenate([ 
+                        feed_dict[self.meta_input_indices_ph][:num_cues],
+                        [0] * len(indices)], axis=0)  # will be masked
+                    feed_dict[self.guess_input_mask_ph] = np.array(
+                        [True] * (num_cues) + [False] * (len(indices)), dtype=np.bool)
+                    result_embeddings = self.sess.run(self.meta_cached_emb_raw_output,
+                                                      feed_dict=feed_dict)
+                    vals = result_embeddings[num_cues:, :]
+                    print(vals)
+
+                    format_str = ", ".join(["%f"] * len(names))
+
+                    for i in range(vals.shape[-1]):
+                        fout.write("%i, " % i + format_str % tuple(vals[:, i]) + "\n")
 
     def guess_embeddings_and_optimize(self, num_optimization_epochs=1000,
                                       eval_every=50, optimization_rate=1e-4,
