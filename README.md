@@ -10,7 +10,7 @@ See the examples and paper for further details. The application to the domains f
 
 Polynomial domain experiments: code in the examples folder and at <https://github.com/lampinen/HoMM_polynomial_analysis>
 
-Card games domain: <https://github.com/lampinen/meta_cards> 
+Card games domain: <https://github.com/lampinen/HoMM_cards> 
 
 RL domain: <https://github.com/lampinen/homm_grids>
 
